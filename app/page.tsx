@@ -201,8 +201,10 @@ export default function Home() {
           return (
             <motion.div
               key={item.id}
-              className={`absolute shadow-lg p-2 bg-white pb-8 group ${isLoggedIn ? 'cursor-grab active:cursor-grabbing' : ''}`}
-              style={{ left: item.x, top: item.y }}
+              // 【核心修复1】加上 top-0 left-0 锚定原点
+              className={`absolute top-0 left-0 shadow-lg p-2 bg-white pb-8 group ${isLoggedIn ? 'cursor-grab active:cursor-grabbing' : ''}`}
+              // 【核心修复2】把 left/top 改成动画引擎专用的 x/y
+              style={{ x: item.x, y: item.y }}
               drag={isLoggedIn}
               dragMomentum={false} 
               onDragEnd={(e, info) => handleDragEnd(item.id, item.x, item.y, info)}
@@ -225,13 +227,11 @@ export default function Home() {
                   overflow: 'hidden',
                   position: 'relative'
                 }}
-                // 【核心魔法】防止拖动缩放条时，照片被拖跑
                 onPointerDown={(e) => {
                   const rect = e.currentTarget.getBoundingClientRect();
                   const isResizeArea = (e.clientX > rect.right - 20) && (e.clientY > rect.bottom - 20);
                   if (isResizeArea) e.stopPropagation(); 
                 }}
-                // 松开鼠标时保存最新尺寸
                 onMouseUp={(e) => {
                   handleResizeEnd(item.id, e.currentTarget.offsetWidth, e.currentTarget.offsetHeight);
                 }}
@@ -247,12 +247,13 @@ export default function Home() {
         }
 
         if (item.type === 'text') {
-          // ... 文本部分保持原样 ...
           return (
             <motion.div
               key={item.id}
-              className={`absolute text-zinc-700 font-serif text-xl group px-2 py-1 ${isLoggedIn ? 'cursor-grab active:cursor-grabbing' : ''}`}
-              style={{ left: item.x, top: item.y }}
+              // 【核心修复3】加上 top-0 left-0 锚定原点
+              className={`absolute top-0 left-0 text-zinc-700 font-serif text-xl group px-2 py-1 ${isLoggedIn ? 'cursor-grab active:cursor-grabbing' : ''}`}
+              // 【核心修复4】把 left/top 改成动画引擎专用的 x/y
+              style={{ x: item.x, y: item.y }}
               drag={isLoggedIn}
               dragMomentum={false}
               onDragEnd={(e, info) => handleDragEnd(item.id, item.x, item.y, info)}
