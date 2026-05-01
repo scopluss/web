@@ -347,7 +347,7 @@ export default function Home() {
 
       <motion.div
         className="absolute top-0 left-0 w-screen h-screen"
-        style={{ x: panX, y: panY, scale }}
+        style={{ x: panX, y: panY, scale, willChange: 'transform' }}
         drag={!isPlacing} 
         dragListener={false}            
         dragControls={dragControls}     
@@ -406,7 +406,8 @@ export default function Home() {
                   }}
                   onMouseUp={(e) => handleResizeEnd(item.id, e.currentTarget.offsetWidth, e.currentTarget.offsetHeight)}
                 >
-                  <img src={item.content} alt="photo" className="w-full h-full object-cover pointer-events-none" />
+                  <img src={item.content} alt="photo" className="w-full h-full object-cover pointer-events-none"  loading="lazy"      
+                    decoding="async"    />
                 </div>
               </motion.div>
             );
