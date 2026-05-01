@@ -8,12 +8,15 @@ const supabaseUrl = "/api/supabase";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+// 🆕 1. 在类型中增加 width 和 height 记忆
 type CanvasItem = {
   id: string;
   type: 'photo' | 'text';
   content: string;
   x: number;
   y: number;
+  width?: number;  
+  height?: number; 
 };
 
 export default function Home() {
@@ -23,13 +26,13 @@ export default function Home() {
   const [items, setItems] = useState<CanvasItem[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
-  // 🎟️ 馆长专属状态 (必须放在组件内部)
+  // 🎟️ 馆长专属状态
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  // 🕵️ 每次打开网页自动检查是不是馆长本人
+  // 🕵️ 检查登录
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setIsLoggedIn(!!session);
@@ -39,7 +42,7 @@ export default function Home() {
     });
   }, []);
 
-  // 🔑 登录和退出动作
+  // 🔑 登录退出
   const handleLogin = async () => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
@@ -54,7 +57,7 @@ export default function Home() {
     alert("已锁定画廊，现在是公共浏览模式。");
   };
 
-  // 1. 网页刚打开时，从数据库拉取所有保存好的画布元素
+  // 获取数据 (🆕2. 提取 width 和 height)
   useEffect(() => {
     fetchItems();
   }, []);
@@ -67,15 +70,16 @@ export default function Home() {
         type: item.item_type,
         content: item.content,
         x: item.pos_x,
-        y: item.pos_y
+        y: item.pos_y,
+        width: item.width,   // 提取宽度
+        height: item.height  // 提取高度
       }));
       setItems(formattedItems);
     }
   };
 
-  // 2. 双击背景添加文本 (加了隐形斗篷：必须登录才能触发)
   const handleDoubleClick = async (e: React.MouseEvent) => {
-    if (!isLoggedIn) return; // 🛡️ 如果没登录，双击没反应
+    if (!isLoggedIn) return; 
     
     if (e.target === containerRef.current) {
       const startX = e.clientX - 60;
@@ -93,12 +97,10 @@ export default function Home() {
     }
   };
 
-  // 3. 点击按钮触发本地选择文件
   const triggerFileInput = () => {
     fileInputRef.current?.click();
   };
 
-  // 4. 上传图片
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -120,23 +122,25 @@ export default function Home() {
     const startX = window.innerWidth / 2 - 100;
     const startY = window.innerHeight / 2 - 150;
 
-    const { data: dbData } = await supabase.from('canvas_items').insert({
-      item_type: 'photo', content: photoUrl, pos_x: startX, pos_y: startY
+    // 🆕3. 上传时给定默认的长宽 256
+    const { data: dbData, error } = await supabase.from('canvas_items').insert({
+      item_type: 'photo', content: photoUrl, pos_x: startX, pos_y: startY, width: 256, height: 256
     }).select().single();
 
     if (dbData) {
-      setItems(prev => [...prev, { id: dbData.id, type: dbData.item_type, content: dbData.content, x: dbData.pos_x, y: dbData.pos_y }]);
+      setItems(prev => [...prev, { 
+        id: dbData.id, type: dbData.item_type, content: dbData.content, 
+        x: dbData.pos_x, y: dbData.pos_y, width: dbData.width, height: dbData.height 
+      }]);
     }
     setIsUploading(false);
   };
 
-  // 5. 删除元素
   const handleDelete = async (id: string) => {
     setItems(prev => prev.filter(item => item.id !== id));
     await supabase.from('canvas_items').delete().eq('id', id);
   };
 
-  // 6. 拖拽停止更新
   const handleDragEnd = async (id: string, currentX: number, currentY: number, dragInfo: any) => {
     const newX = currentX + dragInfo.offset.x;
     const newY = currentY + dragInfo.offset.y;
@@ -144,7 +148,14 @@ export default function Home() {
     await supabase.from('canvas_items').update({ pos_x: newX, pos_y: newY }).eq('id', id);
   };
 
-  // 7. 更新文字
+  // 🆕4. 缩放结束，更新数据库尺寸的函数
+  const handleResizeEnd = async (id: string, newWidth: number, newHeight: number) => {
+    // 同步到本地
+    setItems(prev => prev.map(item => item.id === id ? { ...item, width: newWidth, height: newHeight } : item));
+    // 同步到云端
+    await supabase.from('canvas_items').update({ width: newWidth, height: newHeight }).eq('id', id);
+  };
+
   const handleTextBlur = async (id: string, newContent: string) => {
     await supabase.from('canvas_items').update({ content: newContent }).eq('id', id);
   };
@@ -165,11 +176,10 @@ export default function Home() {
         <div>
           <h1 className="text-2xl font-bold text-zinc-800 tracking-tighter">My Canvas.</h1>
           <p className="text-sm text-zinc-500 mt-1">
-            {isLoggedIn ? "拖拽排版 / 双击空白加文字 / 刷新保留" : "当前为游客参观模式 (只读)"}
+            {isLoggedIn ? "拖拽排版 / 右下角缩放 / 双击空白加文字" : "当前为游客参观模式 (只读)"}
           </p>
         </div>
         
-        {/* 🛡️ 隐形斗篷：只有登录才显示上传按钮 */}
         {isLoggedIn && (
           <button 
             onClick={triggerFileInput}
@@ -191,36 +201,61 @@ export default function Home() {
               key={item.id}
               className={`absolute shadow-lg p-2 bg-white pb-8 group ${isLoggedIn ? 'cursor-grab active:cursor-grabbing' : ''}`}
               style={{ left: item.x, top: item.y }}
-              drag={isLoggedIn} // 🛡️ 只有登录才能拖拽
+              drag={isLoggedIn}
               dragMomentum={false} 
               onDragEnd={(e, info) => handleDragEnd(item.id, item.x, item.y, info)}
               whileHover={isLoggedIn ? { scale: 1.02 } : {}} 
               whileTap={isLoggedIn ? { zIndex: 50, scale: 1.05 } : {}} 
             >
-              {/* 🛡️ 只有登录才显示删除按钮 */}
               {isLoggedIn && (
                 <button 
                   onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }}
                   className="absolute -top-3 -right-3 w-7 h-7 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs shadow-md z-10"
                 >✕</button>
               )}
-              <img src={item.content} alt="canvas photo" className="w-64 h-auto object-cover pointer-events-none" />
+
+              {/* 🆕5. 隐形的调整外壳，里面包裹原图 */}
+              <div
+                style={{
+                  width: item.width || 256,
+                  height: item.height || 256,
+                  resize: isLoggedIn ? 'both' : 'none', // 登录后开启拖拽条
+                  overflow: 'hidden',
+                  position: 'relative'
+                }}
+                // 【核心魔法】防止拖动缩放条时，照片被拖跑
+                onPointerDown={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const isResizeArea = (e.clientX > rect.right - 20) && (e.clientY > rect.bottom - 20);
+                  if (isResizeArea) e.stopPropagation(); 
+                }}
+                // 松开鼠标时保存最新尺寸
+                onMouseUp={(e) => {
+                  handleResizeEnd(item.id, e.currentTarget.offsetWidth, e.currentTarget.offsetHeight);
+                }}
+              >
+                <img 
+                  src={item.content} 
+                  alt="canvas photo" 
+                  className="w-full h-full object-cover pointer-events-none" 
+                />
+              </div>
             </motion.div>
           );
         }
 
         if (item.type === 'text') {
+          // ... 文本部分保持原样 ...
           return (
             <motion.div
               key={item.id}
               className={`absolute text-zinc-700 font-serif text-xl group px-2 py-1 ${isLoggedIn ? 'cursor-grab active:cursor-grabbing' : ''}`}
               style={{ left: item.x, top: item.y }}
-              drag={isLoggedIn} // 🛡️ 只有登录才能拖拽
+              drag={isLoggedIn}
               dragMomentum={false}
               onDragEnd={(e, info) => handleDragEnd(item.id, item.x, item.y, info)}
               whileTap={isLoggedIn ? { zIndex: 50 } : {}}
             >
-              {/* 🛡️ 只有登录才显示删除按钮 */}
               {isLoggedIn && (
                 <button 
                   onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }}
@@ -233,7 +268,7 @@ export default function Home() {
                 value={item.content}
                 onChange={(e) => updateTextLocally(item.id, e.target.value)}
                 onBlur={(e) => handleTextBlur(item.id, e.target.value)}
-                disabled={!isLoggedIn} // 🛡️ 没登录不能修改文字内容
+                disabled={!isLoggedIn} 
                 className={`bg-transparent outline-none w-auto ${isLoggedIn ? 'border-b border-transparent focus:border-zinc-300' : ''}`}
                 style={{ width: `${Math.max(item.content.length, 4)}ch` }}
               />
@@ -242,7 +277,7 @@ export default function Home() {
         }
       })}
 
-      {/* 🛡️ 右下角隐形小门禁 ---------------- */}
+      {/* 门禁体系 */}
       <div style={{ position: 'fixed', bottom: '20px', right: '20px', zIndex: 9999 }}>
         {isLoggedIn ? (
           <button onClick={handleLogout} style={{ padding: '8px', background: '#ff4d4f', color: '#fff', borderRadius: '8px', cursor: 'pointer', border: 'none' }}>
@@ -256,15 +291,4 @@ export default function Home() {
       </div>
 
       {showLogin && !isLoggedIn && (
-        <div style={{ position: 'fixed', bottom: '60px', right: '20px', background: '#fff', padding: '15px', borderRadius: '8px', border: '1px solid #ddd', zIndex: 9999, display: 'flex', flexDirection: 'column', gap: '10px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
-          <p style={{ margin: 0, fontWeight: 'bold' }}>馆长通道</p>
-          <input placeholder="邮箱" value={email} onChange={e => setEmail(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
-          <input placeholder="密码" type="password" value={password} onChange={e => setPassword(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
-          <button onClick={handleLogin} style={{ padding: '8px', background: '#000', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
-            开启修改模式
-          </button>
-        </div>
-      )}
-    </main>
-  );
-}
+        <div style={{ position: 'fixed', bottom: '60px', right: '20px', background: '#fff', padding: '15px', borderRadius: '8px', border: '1px s
