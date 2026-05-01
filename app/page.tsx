@@ -181,7 +181,7 @@ export default function Home() {
     let rowMaxHeight = 0;
 
     const newItems = [...items];
-    const updates = [];
+    const updates: any[] = [];
 
     // 智能网格排列计算
     selectedItems.forEach((item, index) => {
