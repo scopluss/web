@@ -335,10 +335,19 @@ export default function Home() {
         drag={!isPlacing} 
         dragMomentum={true}
       >
-        <div 
+                <div 
           id="canvas-handle"
-          className="absolute w-[1000vw] h-[1000vh] -left-[450vw] -top-[450vh] active:cursor-grabbing"
-          style={{ backgroundImage: 'radial-gradient(#d4d4d8 1.5px, transparent 1.5px)', backgroundSize: `48px 48px`, backgroundPosition: 'center center' }}
+          className="absolute active:cursor-grabbing"
+          // 🌟 核心修复：将地图边境的长宽放大到了 1000 个屏幕！这就真成无底洞了
+          style={{ 
+            width: '10000vw', 
+            height: '10000vh', 
+            left: '-5000vw', 
+            top: '-5000vh',
+            backgroundImage: 'radial-gradient(#d4d4d8 1.5px, transparent 1.5px)', 
+            backgroundSize: `48px 48px`, 
+            backgroundPosition: 'center center' 
+          }}
           onClick={(e) => {
             if (isPlacing) {
               const { x, y } = getCanvasPos(e.clientX, e.clientY);
