@@ -345,9 +345,9 @@ export default function Home() {
         <button onClick={() => scale.set(Math.min(5, scale.get() * 1.2))} className="text-xl px-2 hover:scale-125 transition-transform text-zinc-600">+</button>
       </div>
 
-      <motion.div
+            <motion.div
         className="absolute top-0 left-0 w-screen h-screen"
-        style={{ x: panX, y: panY, scale, willChange: 'transform' }}
+        style={{ x: panX, y: panY, scale }}
         drag={!isPlacing} 
         dragListener={false}            
         dragControls={dragControls}     
@@ -373,7 +373,7 @@ export default function Home() {
 
           if (item.type === 'photo') {
             return (
-              <motion.div
+                            <motion.div
                 key={item.id}
                 className={`absolute shadow-lg p-2 bg-white pb-8 group
                   ${isLoggedIn && !isSelectMode && !isPlacing ? 'cursor-grab active:cursor-grabbing' : ''}
@@ -381,7 +381,8 @@ export default function Home() {
                   ${isSelected ? 'ring-4 ring-blue-500 ring-offset-2 z-[60]' : ''}
                   ${isPlacing ? 'pointer-events-none opacity-50' : ''} 
                 `}
-                style={{ left: item.x, top: item.y }}
+                // 🌟 魔法：只给每一个小方块开启 translateZ(0) 和 backface 隐藏，强制形成独立图层，动它时绝不干扰邻居！
+                style={{ left: item.x, top: item.y, backfaceVisibility: 'hidden', WebkitTransform: 'translateZ(0)' }}
                 onPointerDown={(e) => startDragItem(item.id, item.x, item.y, e)}
                 onPointerMove={doDragItem}
                 onPointerUp={stopDragItem}
@@ -400,14 +401,12 @@ export default function Home() {
                   style={{ width: item.width || 256, height: item.height || 256, resize: isLoggedIn && !isSelectMode ? 'both' : 'none', overflow: 'hidden', position: 'relative' }}
                   onPointerDown={(e) => {
                     const rect = e.currentTarget.getBoundingClientRect();
-                    if (e.clientX > rect.right - 20 && e.clientY > rect.bottom - 20) {
-                      e.stopPropagation();
-                    }
+                    if (e.clientX > rect.right - 20 && e.clientY > rect.bottom - 20) { e.stopPropagation(); }
                   }}
                   onMouseUp={(e) => handleResizeEnd(item.id, e.currentTarget.offsetWidth, e.currentTarget.offsetHeight)}
                 >
-                  <img src={item.content} alt="photo" className="w-full h-full object-cover pointer-events-none"  loading="lazy"      
-                    decoding="async"    />
+                  {/* 🌟 魔法2：去掉了惹祸的 loading="lazy"，避免闪烁 */}
+                  <img src={item.content} alt="photo" className="w-full h-full object-cover pointer-events-none" decoding="async" />
                 </div>
               </motion.div>
             );
