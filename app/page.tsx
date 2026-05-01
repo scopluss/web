@@ -4,8 +4,8 @@ import { motion } from 'framer-motion';
 import { createClient } from '@supabase/supabase-js';
 
 // 初始化 Supabase 客户端
-const supabaseUrl = "/api/supabase";
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+// 告诉它：如果是打包阶段，就用环境里的真实网址；如果是用户打开了浏览器，就走魔法伪装通道
+const supabaseUrl = typeof window !== "undefined" ? "/api/supabase" : process.env.NEXT_PUBLIC_SUPABASE_URL!;const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // 🆕 1. 在类型中增加 width 和 height 记忆
