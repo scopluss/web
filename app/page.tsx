@@ -36,7 +36,10 @@ export default function Home() {
   const panX = useMotionValue(0);
   const panY = useMotionValue(0);
 
-  // 🕵️ 检查登录
+  // 🌟 [新增] 多选与排版状态
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => setIsLoggedIn(!!session));
     supabase.auth.onAuthStateChange((_event, session) => setIsLoggedIn(!!session));
@@ -59,10 +62,11 @@ export default function Home() {
   
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    setIsSelectMode(false);
+    setSelectedIds([]);
     alert("已锁定画廊，现在是公共浏览模式。");
   };
 
-  // 🧮 坐标轴魔法转换器
   const getCanvasPos = (screenX: number, screenY: number) => {
     const cx = window.innerWidth / 2;
     const cy = window.innerHeight / 2;
@@ -93,7 +97,6 @@ export default function Home() {
     }
   };
 
-  // 🌟 [修改] 支持批量上传的函数
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -102,22 +105,14 @@ export default function Home() {
     let successCount = 0;
     const newCanvasItems: CanvasItem[] = [];
 
-    // 循环处理用户选中的每一张图片
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      // 加上序号 i，防止一瞬间批量并发导致时间戳重名
       const fileName = `${Date.now()}_${i}.${file.name.split('.').pop()}`; 
       
       const { error: uploadError } = await supabase.storage.from('photos').upload(fileName, file);
-
-      if (uploadError) { 
-        console.error("某张图片上传失败：", uploadError.message); 
-        continue; 
-      }
+      if (uploadError) continue; 
 
       const photoUrl = supabase.storage.from('photos').getPublicUrl(fileName).data.publicUrl;
-
-      // 💡 彩蛋：每次循环给坐标加上 40 像素的偏移量，实现“阶梯式散开”效果
       const offsetX = i * 40;
       const offsetY = i * 40;
       const { x: startX, y: startY } = getCanvasPos(
@@ -138,21 +133,8 @@ export default function Home() {
       }
     }
 
-    // 一次性把上传成功的所有图片加到画板上
-    if (newCanvasItems.length > 0) {
-      setItems(prev => [...prev, ...newCanvasItems]);
-    }
-
-    // 友情提示
-    if (successCount < files.length) {
-      alert(`注意：只有 ${successCount}/${files.length} 张图片上传成功。`);
-    }
-
-    // 清空 input，允许下次选择同样的图片
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-
+    if (newCanvasItems.length > 0) setItems(prev => [...prev, ...newCanvasItems]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
     setIsUploading(false);
   };
 
@@ -179,13 +161,69 @@ export default function Home() {
     await supabase.from('canvas_items').update({ content: newContent }).eq('id', id);
   };
 
+  // 🌟 [新增] 一键整齐排版算法
+  const arrangeSelected = async () => {
+    if (selectedIds.length === 0) return;
+
+    // 筛选出选中的元素
+    const selectedItems = items.filter(i => selectedIds.includes(i.id));
+
+    // 计算被选中元素的左上角基准点 (作为排版的起始锚点)
+    const minX = Math.min(...selectedItems.map(i => i.x));
+    const minY = Math.min(...selectedItems.map(i => i.y));
+
+    // 根据数量计算列数，让排版尽量方正
+    const cols = Math.ceil(Math.sqrt(selectedItems.length));
+    const gap = 40; // 图片之间的间距
+
+    let currentX = minX;
+    let currentY = minY;
+    let rowMaxHeight = 0;
+
+    const newItems = [...items];
+    const updates = [];
+
+    // 智能网格排列计算
+    selectedItems.forEach((item, index) => {
+      if (index > 0 && index % cols === 0) {
+        currentX = minX; // 换行，x复位
+        currentY += rowMaxHeight + gap; // y增加上一行的最大高度
+        rowMaxHeight = 0; // 重置行高
+      }
+
+      // 记录新坐标
+      const targetIndex = newItems.findIndex(i => i.id === item.id);
+      newItems[targetIndex] = { ...newItems[targetIndex], x: currentX, y: currentY };
+      updates.push({ id: item.id, pos_x: currentX, pos_y: currentY });
+
+      // 为下一个元素准备偏移量
+      currentX += (item.width || 256) + gap;
+      rowMaxHeight = Math.max(rowMaxHeight, item.height || 256);
+    });
+
+    // 1. 本地动画瞬间归位
+    setItems(newItems);
+    setIsSelectMode(false);
+    setSelectedIds([]);
+
+    // 2. 并发同步给云端数据库
+    await Promise.all(updates.map(u => 
+      supabase.from('canvas_items').update({ pos_x: u.pos_x, pos_y: u.pos_y }).eq('id', u.id)
+    ));
+  };
+
+  // 🌟 [新增] 点击选中/取消选中
+  const handleItemClick = (id: string) => {
+    if (!isSelectMode) return;
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  };
+
   return (
     <main 
       className="relative w-screen h-screen overflow-hidden bg-[#f4f4f2]"
       onWheel={handleWheel}
       onDoubleClick={handleDoubleClick}
     >
-      {/* 🌟 [修改] 加上了 multiple 属性，允许浏览器批量框选图片！ */}
       <input type="file" accept="image/*" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
 
       {/* --- 顶部控制台 --- */}
@@ -193,24 +231,47 @@ export default function Home() {
         <div>
           <h1 className="text-3xl font-bold text-zinc-800 tracking-tighter">My Canvas.</h1>
           <p className="text-sm text-zinc-500 mt-1 drop-shadow-sm font-medium">
-            {isLoggedIn ? "拖拽排版 / 右下缩放 / 双击空白加文字" : "游客体验模式 (按住屏幕空地拖拽、用滚轮漫游)"}
+            {isLoggedIn ? "拖拽排版 / 右下缩放 / 开启多选即可全自动对齐" : "游客体验模式 (按住屏幕空地拖拽、用滚轮漫游)"}
           </p>
         </div>
         
         {isLoggedIn && (
-          <div className="flex items-center gap-3 pointer-events-auto bg-white/90 p-2 rounded-2xl shadow-sm backdrop-blur-md border border-white/50">
-            <div className="flex items-center gap-2 text-sm text-zinc-600 pl-2">
-              <span>大小：</span>
-              <select value={uploadSize} onChange={(e) => setUploadSize(Number(e.target.value))} className="bg-transparent font-bold outline-none cursor-pointer">
-                <option value={150}>小图 (150px)</option>
-                <option value={256}>中图 (256px)</option>
-                <option value={400}>大图 (400px)</option>
-                <option value={600}>超大图 (600px)</option>
-              </select>
-            </div>
-            <button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className={`px-4 py-2 text-sm rounded-full shadow-lg transition-all text-white ${isUploading ? 'bg-zinc-400' : 'bg-zinc-900 hover:scale-105'}`}>
-              {isUploading ? "📸 疯狂飞升中..." : "+ 批量上传图画"}
+          <div className="flex flex-wrap items-center gap-3 pointer-events-auto bg-white/90 p-2 rounded-2xl shadow-sm backdrop-blur-md border border-white/50">
+            
+            {/* 🌟 [新增] 多选排版切按钮 */}
+            <button 
+              onClick={() => { setIsSelectMode(!isSelectMode); setSelectedIds([]); }}
+              className={`px-3 py-2 text-sm rounded-xl font-bold transition-all shadow-sm ${isSelectMode ? 'bg-blue-100 text-blue-600 border border-blue-300' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}
+            >
+              {isSelectMode ? "✅ 退出多选" : "🔲 多选阵列"}
             </button>
+
+            {/* 🌟 [新增] 只有选中东西时才显示的“魔法排版键” */}
+            {isSelectMode && selectedIds.length > 0 && (
+              <button 
+                onClick={arrangeSelected}
+                className="px-4 py-2 text-sm rounded-xl font-bold transition-all bg-blue-600 text-white hover:bg-blue-500 shadow-lg animate-pulse"
+              >
+                ✨ 智能整理 ({selectedIds.length}项)
+              </button>
+            )}
+
+            {!isSelectMode && (
+              <>
+                <div className="flex items-center gap-2 text-sm text-zinc-600 pl-2 border-l border-zinc-200">
+                  <span>大小：</span>
+                  <select value={uploadSize} onChange={(e) => setUploadSize(Number(e.target.value))} className="bg-transparent font-bold outline-none cursor-pointer">
+                    <option value={150}>小图 (150px)</option>
+                    <option value={256}>中图 (256px)</option>
+                    <option value={400}>大图 (400px)</option>
+                    <option value={600}>超大图 (600px)</option>
+                  </select>
+                </div>
+                <button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className={`px-4 py-2 text-sm rounded-xl shadow-lg transition-all text-white ${isUploading ? 'bg-zinc-400' : 'bg-zinc-900 hover:scale-105'}`}>
+                  {isUploading ? "📸 上传中..." : "+ 批量上传"}
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -224,7 +285,6 @@ export default function Home() {
         <button onClick={() => setScale(s => Math.min(5, s * 1.2))} className="text-xl px-2 hover:scale-125 transition-transform text-zinc-600">+</button>
       </div>
 
-      {/* --- 🌍 本质：无限画布相机世界 --- */}
       <motion.div
         className="absolute top-0 left-0 w-screen h-screen"
         style={{ x: panX, y: panY, scale }}
@@ -234,31 +294,36 @@ export default function Home() {
         <div 
           id="canvas-handle"
           className="absolute w-[1000vw] h-[1000vh] -left-[450vw] -top-[450vh] cursor-grab active:cursor-grabbing"
-          style={{
-            backgroundImage: 'radial-gradient(#d4d4d8 1.5px, transparent 1.5px)',
-            backgroundSize: `48px 48px`,
-            backgroundPosition: 'center center'
-          }}
+          style={{ backgroundImage: 'radial-gradient(#d4d4d8 1.5px, transparent 1.5px)', backgroundSize: `48px 48px`, backgroundPosition: 'center center' }}
         />
 
         {items.map((item) => {
+          const isSelected = selectedIds.includes(item.id);
+
           if (item.type === 'photo') {
             return (
               <motion.div
                 key={item.id}
-                className={`absolute top-0 left-0 shadow-lg p-2 bg-white pb-8 group ${isLoggedIn ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                // 🌟 [新增] 选中时加入蓝色精美边框高亮
+                className={`absolute top-0 left-0 shadow-lg p-2 bg-white pb-8 group transition-all duration-300
+                  ${isLoggedIn && !isSelectMode ? 'cursor-grab active:cursor-grabbing' : ''}
+                  ${isSelectMode ? 'cursor-pointer hover:bg-blue-50' : ''}
+                  ${isSelected ? 'ring-4 ring-blue-500 ring-offset-2 z-[60] scale-105' : ''}
+                `}
                 style={{ x: item.x, y: item.y }}
-                drag={isLoggedIn}
+                // 🌟 [新增] 在多选模式下禁止拖拽，并绑定点击选中事件
+                drag={isLoggedIn && !isSelectMode}
+                onClick={() => handleItemClick(item.id)}
                 dragMomentum={false} 
                 onDragEnd={(e, info) => handleDragEnd(item.id, item.x, item.y, info)}
-                whileHover={isLoggedIn ? { scale: 1.02 } : {}} 
-                whileTap={isLoggedIn ? { zIndex: 50, scale: 1.05 } : {}} 
+                whileHover={isLoggedIn && !isSelectMode ? { scale: 1.02 } : {}} 
+                whileTap={isLoggedIn && !isSelectMode ? { zIndex: 50, scale: 1.05 } : {}} 
               >
-                {isLoggedIn && (
+                {isLoggedIn && !isSelectMode && (
                   <button onClick={(e) => handleDelete(item.id, e)} className="absolute -top-3 -right-3 w-7 h-7 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs shadow-md z-10">✕</button>
                 )}
                 <div
-                  style={{ width: item.width || 256, height: item.height || 256, resize: isLoggedIn ? 'both' : 'none', overflow: 'hidden', position: 'relative' }}
+                  style={{ width: item.width || 256, height: item.height || 256, resize: isLoggedIn && !isSelectMode ? 'both' : 'none', overflow: 'hidden', position: 'relative' }}
                   onPointerDown={(e) => {
                     const rect = e.currentTarget.getBoundingClientRect();
                     if (e.clientX > rect.right - 20 && e.clientY > rect.bottom - 20) e.stopPropagation(); 
@@ -275,29 +340,31 @@ export default function Home() {
             return (
               <motion.div
                 key={item.id}
-                className={`absolute top-0 left-0 text-zinc-700 font-serif text-xl group px-2 py-1 ${isLoggedIn ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                className={`absolute top-0 left-0 text-zinc-700 font-serif text-xl group px-2 py-1 transition-all duration-300
+                  ${isLoggedIn && !isSelectMode ? 'cursor-grab active:cursor-grabbing' : ''}
+                  ${isSelectMode ? 'cursor-pointer hover:bg-blue-50' : ''}
+                  ${isSelected ? 'ring-4 ring-blue-500 ring-offset-2 z-[60] bg-white rounded-md scale-105' : ''}
+                `}
                 style={{ x: item.x, y: item.y }}
-                drag={isLoggedIn}
+                drag={isLoggedIn && !isSelectMode}
+                onClick={() => handleItemClick(item.id)}
                 dragMomentum={false}
                 onDragEnd={(e, info) => handleDragEnd(item.id, item.x, item.y, info)}
-                whileTap={isLoggedIn ? { zIndex: 50 } : {}}
+                whileTap={isLoggedIn && !isSelectMode ? { zIndex: 50 } : {}}
               >
-                {isLoggedIn && (
+                {isLoggedIn && !isSelectMode && (
                   <button onClick={(e) => handleDelete(item.id, e)} className="absolute -top-4 -right-4 w-6 h-6 bg-zinc-200 text-zinc-600 hover:bg-red-500 hover:text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs shadow-sm z-10">✕</button>
                 )}
-                              {/* 🌟 核心修复：自动完美回弹撑开宽度 */}
-                            {/* 🌟 核心修复：自动完美回弹撑开宽度 (修复函数名) */}
-              <div className="inline-grid items-center">
+              <div className="inline-grid items-center pointer-events-none">
                 <span className="col-start-1 row-start-1 invisible whitespace-pre font-inherit px-1 min-w-[20px]">
                   {item.content || ' '}
                 </span>
                 <input
                   type="text"
                   value={item.content}
-                  /* 👇 这里换成了现在代码里真实存在的 updateText */
                   onChange={(e) => updateText(item.id, e.target.value)}
-                  disabled={!isLoggedIn} 
-                  className={`col-start-1 row-start-1 w-full bg-transparent outline-none px-1 ${isLoggedIn ? 'border-b border-transparent focus:border-zinc-300' : ''}`}
+                  disabled={!isLoggedIn || isSelectMode} 
+                  className={`pointer-events-auto col-start-1 row-start-1 w-full bg-transparent outline-none px-1 ${isLoggedIn && !isSelectMode ? 'border-b border-transparent focus:border-zinc-300' : ''}`}
                 />
               </div>
               </motion.div>
