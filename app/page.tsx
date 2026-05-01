@@ -1,6 +1,6 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
-import { motion, useMotionValue, useMotionValueEvent } from 'framer-motion';
+import { motion, useMotionValue, useMotionValueEvent, useDragControls } from 'framer-motion';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = typeof window !== "undefined" ? `${window.location.origin}/api/supabase` : process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -30,6 +30,9 @@ export default function Home() {
   const [scaleUI, setScaleUI] = useState(1); 
   useMotionValueEvent(scale, "change", (latest) => setScaleUI(latest));
 
+  // 🌟 核心防滑钩子：手动指挥画布什么情况才可以拖动
+  const dragControls = useDragControls();
+
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isPlacing, setIsPlacing] = useState(false);
@@ -37,7 +40,6 @@ export default function Home() {
 
   const [fullscreenPhoto, setFullscreenPhoto] = useState<string | null>(null);
 
-  // 🌟 [新增核心] 手搓一套最可靠的高精度绝对拖移记录器！
   const dragCtx = useRef<{ id: string | null, startX: number, startY: number, initX: number, initY: number }>({ 
     id: null, startX: 0, startY: 0, initX: 0, initY: 0 
   });
@@ -80,15 +82,13 @@ export default function Home() {
     panY.set(panY.get() - e.deltaY);
   };
 
-  // 🌟 手搓高精度粘手拖拽：开始拖拽
   const startDragItem = (id: string, initX: number, initY: number, e: React.PointerEvent) => {
     if (!isLoggedIn || isSelectMode || isPlacing) return;
-    e.stopPropagation(); // 阻止背景跟跑
+    e.stopPropagation(); 
     dragCtx.current = { id, startX: e.clientX, startY: e.clientY, initX, initY };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
-  // 🌟 手搓高精度粘手拖拽：拖拽移动中（极其丝滑不掉帧）
   const doDragItem = (e: React.PointerEvent) => {
     if (dragCtx.current.id) {
       const s = scale.get();
@@ -98,12 +98,11 @@ export default function Home() {
     }
   };
 
-  // 🌟 手搓高精度粘手拖拽：松开保存绝对坐标（杜绝残影，永不乱飞）
   const stopDragItem = async (e: React.PointerEvent) => {
     const id = dragCtx.current.id;
     if (id) {
       (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-      dragCtx.current.id = null; // 斩掉状态
+      dragCtx.current.id = null; 
 
       const targetItem = items.find(i => i.id === id);
       if (targetItem) {
@@ -226,7 +225,7 @@ export default function Home() {
         <div>
           <h1 className="text-3xl font-bold text-zinc-800 tracking-tighter">My Canvas.</h1>
           <p className="text-sm text-zinc-500 mt-1 drop-shadow-sm font-medium">
-            {isLoggedIn ? "拖拽排版 / 双击放大 / 双击空地加字" : "双击全屏放大 / 按住屏幕空地拖拽"}
+            {isLoggedIn ? "按坐标精准拖移 / 缩放点阵画布" : "双击图片全屏放大 / 按住空地平移"}
           </p>
         </div>
         
@@ -234,9 +233,7 @@ export default function Home() {
           <div className="flex flex-wrap items-center gap-3 pointer-events-auto bg-white/90 p-2 rounded-2xl shadow-sm backdrop-blur-md border border-white/50">
             {isPlacing ? (
               <div className="flex items-center gap-4 px-4 py-2 text-sm rounded-xl font-bold bg-yellow-400 text-black shadow-lg animate-bounce border border-yellow-500">
-                <span>👇 准星已开启：请点击下方空地选择 
-                  {placeMode === 'all' ? ` 所有图片(${items.filter(i=>i.type==='photo').length}项)` : ` 选中项(${selectedIds.length}项)`} 中心
-                </span>
+                <span>👇 请点击下方空地选择阵列中心</span>
                 <button onClick={() => { setIsPlacing(false); setPlaceMode(null); }} className="px-2 py-1 bg-black/10 hover:bg-black/20 rounded-md transition-colors">取消</button>
               </div>
             ) : (
@@ -247,12 +244,12 @@ export default function Home() {
                 </button>
                 {!isSelectMode && (
                   <button onClick={() => prepareReArrange('all')} className="px-3 py-2 text-sm rounded-xl font-bold transition-all bg-purple-600 text-white hover:bg-purple-500 shadow-sm">
-                    🌌 整理全图 ({items.filter(i => i.type==='photo').length}项)
+                    🌌 整理全图 
                   </button>
                 )}
                 {isSelectMode && selectedIds.length > 0 && (
                   <button onClick={() => prepareReArrange('selected')} className="px-4 py-2 text-sm rounded-xl font-bold transition-all bg-blue-600 text-white hover:bg-blue-500 shadow-lg animate-pulse">
-                    ✨ 智能整理 ({selectedIds.length}项)
+                    ✨ 整理 ({selectedIds.length})
                   </button>
                 )}
                 {!isSelectMode && (
@@ -260,14 +257,14 @@ export default function Home() {
                     <div className="flex items-center gap-2 text-sm text-zinc-600 pl-2 border-l border-zinc-200">
                       <span>大小：</span>
                       <select value={uploadSize} onChange={(e) => setUploadSize(Number(e.target.value))} className="bg-transparent font-bold outline-none cursor-pointer">
-                        <option value={150}>小图 (150px)</option>
-                        <option value={256}>中图 (256px)</option>
-                        <option value={400}>大图 (400px)</option>
-                        <option value={600}>超大图 (600px)</option>
+                        <option value={150}>小图</option>
+                        <option value={256}>中图</option>
+                        <option value={400}>大图</option>
+                        <option value={600}>超大</option>
                       </select>
                     </div>
                     <button onClick={() => fileInputRef.current?.click()} disabled={isUploading || isPlacing} className={`px-4 py-2 text-sm rounded-xl shadow-lg transition-all text-white ${isUploading ? 'bg-zinc-400' : 'bg-zinc-900 hover:scale-105'}`}>
-                      {isUploading ? "📸 上传中..." : "+ 批量上传"}
+                      + 批量上传
                     </button>
                   </>
                 )}
@@ -277,7 +274,6 @@ export default function Home() {
         )}
       </div>
 
-      {/* --- 左下角缩放控制器 --- */}
       <div className="absolute bottom-6 left-6 z-50 flex items-center bg-white/90 backdrop-blur-md shadow-lg rounded-full px-4 py-2 border border-black/5 gap-4">
         <button onClick={() => scale.set(Math.max(0.1, scale.get() / 1.2))} className="text-xl px-2 hover:scale-125 transition-transform text-zinc-600">−</button>
         <button onClick={() => { scale.set(1); panX.set(0); panY.set(0); }} className="text-xs font-bold w-12 text-center text-zinc-700 hover:text-black">
@@ -290,16 +286,24 @@ export default function Home() {
         className="absolute top-0 left-0 w-screen h-screen"
         style={{ x: panX, y: panY, scale }}
         drag={!isPlacing} 
+        dragListener={false}            /* 🌟 防跟着跑：彻底关闭全局盲目感知拖拽！ */
+        dragControls={dragControls}     /* 🌟 手动拦截控制权 */
         dragMomentum={true}
       >
         <div 
           id="canvas-handle"
           className="absolute active:cursor-grabbing"
           style={{ width: '10000vw', height: '10000vh', left: '-5000vw', top: '-5000vh', backgroundImage: 'radial-gradient(#d4d4d8 1.5px, transparent 1.5px)', backgroundSize: `48px 48px`, backgroundPosition: 'center center' }}
+          
+          /* 🌟 究极解法：只有实打实点击“背景空地”时，才启动画布的平移！ */
+          onPointerDown={(e) => {
+            if (!isPlacing) dragControls.start(e);
+          }}
+          
           onClick={(e) => {
             if (isPlacing) {
-              const { x, y } = getCanvasPos(e.clientX, e.clientY);
-              executeArrange(x, y);
+               const { x, y } = getCanvasPos(e.clientX, e.clientY);
+               executeArrange(x, y);
             }
           }}
         />
@@ -311,7 +315,6 @@ export default function Home() {
             return (
               <motion.div
                 key={item.id}
-                // 🌟 改为真正的绝对定位 (left/top)
                 className={`absolute shadow-lg p-2 bg-white pb-8 group
                   ${isLoggedIn && !isSelectMode && !isPlacing ? 'cursor-grab active:cursor-grabbing' : ''}
                   ${isSelectMode && !isPlacing ? 'cursor-pointer hover:bg-blue-50' : ''}
@@ -319,7 +322,6 @@ export default function Home() {
                   ${isPlacing ? 'pointer-events-none opacity-50' : ''} 
                 `}
                 style={{ left: item.x, top: item.y }}
-                // 🌟 新绑定：手动底层拖拽引擎！
                 onPointerDown={(e) => startDragItem(item.id, item.x, item.y, e)}
                 onPointerMove={doDragItem}
                 onPointerUp={stopDragItem}
@@ -332,15 +334,14 @@ export default function Home() {
                 }}
               >
                 {isLoggedIn && !isSelectMode && (
-                  <button onPointerDown={(e) => handleDelete(item.id, e)} className="absolute -top-3 -right-3 w-7 h-7 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs shadow-md z-10">✕</button>
+                  <button onPointerDown={(e) => handleDelete(item.id, e)} className="absolute -top-3 -right-3 w-7 h-7 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs shadow-md z-[70]">✕</button>
                 )}
                 <div
                   style={{ width: item.width || 256, height: item.height || 256, resize: isLoggedIn && !isSelectMode ? 'both' : 'none', overflow: 'hidden', position: 'relative' }}
                   onPointerDown={(e) => {
                     const rect = e.currentTarget.getBoundingClientRect();
-                    // 防止拖拽和缩放产生冲突
                     if (e.clientX > rect.right - 20 && e.clientY > rect.bottom - 20) {
-                       e.stopPropagation();
+                      e.stopPropagation();
                     }
                   }}
                   onMouseUp={(e) => handleResizeEnd(item.id, e.currentTarget.offsetWidth, e.currentTarget.offsetHeight)}
@@ -380,7 +381,9 @@ export default function Home() {
                   }}
                   onPointerDown={(e) => {
                     const rect = e.currentTarget.getBoundingClientRect();
-                    if (e.clientX > rect.right - 20 && e.clientY > rect.bottom - 20) e.stopPropagation(); 
+                    if (e.clientX > rect.right - 20 && e.clientY > rect.bottom - 20) {
+                      e.stopPropagation(); 
+                    }
                   }}
                   onMouseUp={(e) => handleResizeEnd(item.id, e.currentTarget.offsetWidth, e.currentTarget.offsetHeight)}
                 >
