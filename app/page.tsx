@@ -1,9 +1,8 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
-import { motion, useMotionValue } from 'framer-motion';
+import { motion, useMotionValue, useMotionValueEvent } from 'framer-motion';
 import { createClient } from '@supabase/supabase-js';
 
-// 初始化 Supabase
 const supabaseUrl = typeof window !== "undefined" ? `${window.location.origin}/api/supabase` : process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
@@ -21,17 +20,20 @@ export default function Home() {
   const [uploadSize, setUploadSize] = useState(256);
 
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const[showLogin, setShowLogin] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
   const [email, setEmail] = useState('');
-  const[password, setPassword] = useState('');
+  const [password, setPassword] = useState('');
 
-  // 🌟 [流畅核心层] 将 scale 和平移全丢给底层原生引擎，完全跳过 React 卡顿渲染
+  // 🌟 把缩放也丢给 GPU 引擎处理，避免 React 重绘卡顿
   const scale = useMotionValue(1);
   const panX = useMotionValue(0);
   const panY = useMotionValue(0);
-  const[scaleUI, setScaleUI] = useState(1); // 仅用来展示左下角的百分比文字
+  const [scaleUI, setScaleUI] = useState(1); // 仅用来显示百分比文字
 
-  const[isSelectMode, setIsSelectMode] = useState(false);
+  // 同步底层 motion 到显示文字（不触发重绘）
+  useMotionValueEvent(scale, "change", (latest) => setScaleUI(latest));
+
+  const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isPlacing, setIsPlacing] = useState(false);
   const [placeMode, setPlaceMode] = useState<'selected' | 'all' | null>(null);
@@ -42,7 +44,7 @@ export default function Home() {
     supabase.auth.getSession().then(({ data: { session } }) => setIsLoggedIn(!!session));
     supabase.auth.onAuthStateChange((_event, session) => setIsLoggedIn(!!session));
     fetchItems();
-  },[]);
+  }, []);
 
   const fetchItems = async () => {
     const { data } = await supabase.from('canvas_items').select('*');
@@ -64,28 +66,28 @@ export default function Home() {
     alert("已锁定画廊，现在是公共浏览模式。");
   };
 
+  // 🌟 坐标魔法：实时提取底层真实缩放值
   const getCanvasPos = (screenX: number, screenY: number) => {
     const cx = window.innerWidth / 2; const cy = window.innerHeight / 2;
-    // 强制提取底层的精确刻度
-    return { x: cx + (screenX - cx - panX.get()) / scale.get(), y: cy + (screenY - cy - panY.get()) / scale.get() };
+    const s = scale.get();
+    return { x: cx + (screenX - cx - panX.get()) / s, y: cy + (screenY - cy - panY.get()) / s };
   };
 
   const handleWheel = (e: React.WheelEvent) => {
     if(e.ctrlKey) return; 
-    panX.set(panX.get() - e.deltaX); panY.set(panY.get() - e.deltaY);
+    panX.set(panX.get() - e.deltaX); 
+    panY.set(panY.get() - e.deltaY);
   };
 
   const handleDoubleClick = async (e: React.MouseEvent) => {
     if (!isLoggedIn || isPlacing) return; 
     if ((e.target as HTMLElement).id === 'canvas-handle') {
       const { x: startX, y: startY } = getCanvasPos(e.clientX - 60, e.clientY - 15);
-      
       const tempId = Date.now().toString();
-      const defaultWidth = 200; const defaultHeight = 50;
 
-      setItems(prev =>[...prev, { id: tempId, type: 'text', content: '✍️ 点击修改', x: startX, y: startY, width: defaultWidth, height: defaultHeight }]);
+      setItems(prev => [...prev, { id: tempId, type: 'text', content: '✍️ 点击修改', x: startX, y: startY, width: 200, height: 50 }]);
       const { data } = await supabase.from('canvas_items').insert({
-        item_type: 'text', content: '✍️ 点击修改', pos_x: startX, pos_y: startY, width: defaultWidth, height: defaultHeight
+        item_type: 'text', content: '✍️ 点击修改', pos_x: startX, pos_y: startY, width: 200, height: 50
       }).select().single();
       if (data) setItems(prev => prev.map(item => item.id === tempId ? { ...item, id: data.id } : item));
     }
@@ -95,7 +97,7 @@ export default function Home() {
     const files = e.target.files;
     if (!files || files.length === 0) return;
     setIsUploading(true);
-    const newCanvasItems: CanvasItem[] =[];
+    const newCanvasItems: CanvasItem[] = [];
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -112,7 +114,7 @@ export default function Home() {
 
       if (data) newCanvasItems.push({ id: data.id, type: data.item_type, content: data.content, x: data.pos_x, y: data.pos_y, width: data.width, height: data.height });
     }
-    if (newCanvasItems.length > 0) setItems(prev =>[...prev, ...newCanvasItems]);
+    if (newCanvasItems.length > 0) setItems(prev => [...prev, ...newCanvasItems]);
     if (fileInputRef.current) fileInputRef.current.value = '';
     setIsUploading(false);
   };
@@ -123,10 +125,11 @@ export default function Home() {
     await supabase.from('canvas_items').delete().eq('id', id);
   };
 
+  // 🌟 修复乱飞：提取底层实时缩放计算偏移
   const handleDragEnd = async (id: string, currentX: number, currentY: number, dragInfo: any) => {
-    // 🌟 修复乱飞：提取底层真实的物理缩放去计算偏移距离，杜绝延迟和跳空
-    const newX = currentX + dragInfo.offset.x / scale.get();
-    const newY = currentY + dragInfo.offset.y / scale.get();
+    const s = scale.get();
+    const newX = currentX + dragInfo.offset.x / s;
+    const newY = currentY + dragInfo.offset.y / s;
     setItems(prev => prev.map(item => item.id === id ? { ...item, x: newX, y: newY } : item));
     await supabase.from('canvas_items').update({ pos_x: newX, pos_y: newY }).eq('id', id);
   };
@@ -144,11 +147,14 @@ export default function Home() {
   const prepareReArrange = (mode: 'selected' | 'all') => { setPlaceMode(mode); setIsPlacing(true); };
 
   const executeArrange = async (targetCenterX: number, targetCenterY: number) => {
-    const targetItems = placeMode === 'selected' ? items.filter(i => selectedIds.includes(i.id)) : items.filter(i => i.type === 'photo');
+    const targetItems = placeMode === 'selected' 
+      ? items.filter(i => selectedIds.includes(i.id)) 
+      : items.filter(i => i.type === 'photo');
     if (targetItems.length === 0) return;
+
     const cols = Math.ceil(Math.sqrt(targetItems.length));
     const gap = 40; 
-    const layoutMap: {id: string, x: number, y: number}[] =[];
+    const layoutMap: {id: string, x: number, y: number}[] = [];
     let curX = 0, curY = 0, rowMaxH = 0, maxOffsetX = 0, maxOffsetY = 0;
 
     targetItems.forEach((item, index) => {
@@ -156,14 +162,18 @@ export default function Home() {
       layoutMap.push({ id: item.id, x: curX, y: curY });
       curX += (item.width || 256) + gap;
       rowMaxH = Math.max(rowMaxH, item.height || 256);
-      maxOffsetX = Math.max(maxOffsetX, curX - gap); maxOffsetY = Math.max(maxOffsetY, curY + (item.height || 256));
+      maxOffsetX = Math.max(maxOffsetX, curX - gap); 
+      maxOffsetY = Math.max(maxOffsetY, curY + (item.height || 256));
     });
 
-    const startX = targetCenterX - (maxOffsetX / 2); const startY = targetCenterY - (maxOffsetY / 2);
-    const newItems = [...items]; const updates: any[] =[];
+    const startX = targetCenterX - (maxOffsetX / 2); 
+    const startY = targetCenterY - (maxOffsetY / 2);
+    const newItems = [...items]; 
+    const updates: {id: string, pos_x: number, pos_y: number}[] = []; // 🌟 类型修复
 
     layoutMap.forEach((pos) => {
-      const fX = startX + pos.x; const fY = startY + pos.y;
+      const fX = startX + pos.x; 
+      const fY = startY + pos.y;
       const vIndex = newItems.findIndex(i => i.id === pos.id);
       newItems[vIndex] = { ...newItems[vIndex], x: fX, y: fY };
       updates.push({ id: pos.id, pos_x: fX, pos_y: fY });
@@ -207,4 +217,189 @@ export default function Home() {
               </div>
             ) : (
               <>
-                <button onClick={() => { setIsSelectMode(!isSelectMode); setSelectedIds
+                <button onClick={() => { setIsSelectMode(!isSelectMode); setSelectedIds([]); }}
+                  className={`px-3 py-2 text-sm rounded-xl font-bold transition-all shadow-sm ${isSelectMode ? 'bg-blue-100 text-blue-600 border border-blue-300' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
+                  {isSelectMode ? "✅ 退出多选" : "🔲 多选阵列"}
+                </button>
+                {!isSelectMode && (
+                  <button onClick={() => prepareReArrange('all')} className="px-3 py-2 text-sm rounded-xl font-bold transition-all bg-purple-600 text-white hover:bg-purple-500 shadow-sm">
+                    🌌 整理全图 ({items.filter(i => i.type==='photo').length}项)
+                  </button>
+                )}
+                {isSelectMode && selectedIds.length > 0 && (
+                  <button onClick={() => prepareReArrange('selected')} className="px-4 py-2 text-sm rounded-xl font-bold transition-all bg-blue-600 text-white hover:bg-blue-500 shadow-lg animate-pulse">
+                    ✨ 智能整理 ({selectedIds.length}项)
+                  </button>
+                )}
+                {!isSelectMode && (
+                  <>
+                    <div className="flex items-center gap-2 text-sm text-zinc-600 pl-2 border-l border-zinc-200">
+                      <span>大小：</span>
+                      <select value={uploadSize} onChange={(e) => setUploadSize(Number(e.target.value))} className="bg-transparent font-bold outline-none cursor-pointer">
+                        <option value={150}>小图 (150px)</option>
+                        <option value={256}>中图 (256px)</option>
+                        <option value={400}>大图 (400px)</option>
+                        <option value={600}>超大图 (600px)</option>
+                      </select>
+                    </div>
+                    <button onClick={() => fileInputRef.current?.click()} disabled={isUploading || isPlacing} className={`px-4 py-2 text-sm rounded-xl shadow-lg transition-all text-white ${isUploading ? 'bg-zinc-400' : 'bg-zinc-900 hover:scale-105'}`}>
+                      {isUploading ? "📸 上传中..." : "+ 批量上传"}
+                    </button>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* --- 左下角缩放控制器 --- */}
+      <div className="absolute bottom-6 left-6 z-50 flex items-center bg-white/90 backdrop-blur-md shadow-lg rounded-full px-4 py-2 border border-black/5 gap-4">
+        <button onClick={() => scale.set(Math.max(0.1, scale.get() / 1.2))} className="text-xl px-2 hover:scale-125 transition-transform text-zinc-600">−</button>
+        <button onClick={() => { scale.set(1); panX.set(0); panY.set(0); }} className="text-xs font-bold w-12 text-center text-zinc-700 hover:text-black">
+          {Math.round(scaleUI * 100)}%
+        </button>
+        <button onClick={() => scale.set(Math.min(5, scale.get() * 1.2))} className="text-xl px-2 hover:scale-125 transition-transform text-zinc-600">+</button>
+      </div>
+
+      {/* 🌟 关键：这里的 x/y/scale 全部直连底层 GPU 引擎，拖动100%不掉帧 */}
+      <motion.div
+        className="absolute top-0 left-0 w-screen h-screen"
+        style={{ x: panX, y: panY, scale }}
+        drag={!isPlacing} 
+        dragMomentum={true}
+      >
+        <div 
+          id="canvas-handle"
+          className="absolute active:cursor-grabbing"
+          style={{ 
+            width: '10000vw', height: '10000vh', left: '-5000vw', top: '-5000vh',
+            backgroundImage: 'radial-gradient(#d4d4d8 1.5px, transparent 1.5px)', 
+            backgroundSize: `48px 48px`, backgroundPosition: 'center center' 
+          }}
+          onClick={(e) => {
+            if (isPlacing) {
+              const { x, y } = getCanvasPos(e.clientX, e.clientY);
+              executeArrange(x, y);
+            }
+          }}
+        />
+
+        {items.map((item) => {
+          const isSelected = selectedIds.includes(item.id);
+
+          if (item.type === 'photo') {
+            return (
+              <motion.div
+                key={item.id}
+                className={`absolute top-0 left-0 shadow-lg p-2 bg-white pb-8 group
+                  ${isLoggedIn && !isSelectMode && !isPlacing ? 'cursor-grab active:cursor-grabbing' : ''}
+                  ${isSelectMode && !isPlacing ? 'cursor-pointer hover:bg-blue-50' : ''}
+                  ${isSelected ? 'ring-4 ring-blue-500 ring-offset-2 z-[60]' : ''}
+                  ${isPlacing ? 'pointer-events-none opacity-50' : ''} 
+                `}
+                style={{ x: item.x, y: item.y }}
+                drag={isLoggedIn && !isSelectMode && !isPlacing}
+                onClick={(e) => handleItemClick(item.id, e)}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  if (!isSelectMode && !isPlacing) setFullscreenPhoto(item.content);
+                }}
+                dragMomentum={false} 
+                onDragEnd={(e, info) => handleDragEnd(item.id, item.x, item.y, info)}
+              >
+                {isLoggedIn && !isSelectMode && (
+                  <button onClick={(e) => handleDelete(item.id, e)} className="absolute -top-3 -right-3 w-7 h-7 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs shadow-md z-10">✕</button>
+                )}
+                <div
+                  style={{ width: item.width || 256, height: item.height || 256, resize: isLoggedIn && !isSelectMode ? 'both' : 'none', overflow: 'hidden', position: 'relative' }}
+                  onPointerDown={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    if (e.clientX > rect.right - 20 && e.clientY > rect.bottom - 20) e.stopPropagation(); 
+                  }}
+                  onMouseUp={(e) => handleResizeEnd(item.id, e.currentTarget.offsetWidth, e.currentTarget.offsetHeight)}
+                >
+                  <img src={item.content} alt="photo" className="w-full h-full object-cover pointer-events-none" />
+                </div>
+              </motion.div>
+            );
+          }
+
+          if (item.type === 'text') {
+            return (
+              <motion.div
+                key={item.id}
+                className={`absolute top-0 left-0 text-zinc-700 font-serif group
+                  ${isLoggedIn && !isSelectMode && !isPlacing ? 'cursor-grab active:cursor-grabbing' : ''}
+                  ${isSelected ? 'ring-4 ring-blue-500 ring-offset-2 z-[60] bg-white rounded-md' : ''}
+                  ${isPlacing ? 'pointer-events-none opacity-50' : ''}
+                `}
+                style={{ x: item.x, y: item.y }}
+                drag={isLoggedIn && !isSelectMode && !isPlacing}
+                onClick={(e) => handleItemClick(item.id, e)}
+                dragMomentum={false}
+                onDragEnd={(e, info) => handleDragEnd(item.id, item.x, item.y, info)}
+              >
+                {isLoggedIn && !isSelectMode && (
+                  <button onClick={(e) => handleDelete(item.id, e)} className="absolute -top-4 -right-4 w-6 h-6 bg-zinc-200 text-zinc-600 hover:bg-red-500 hover:text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs shadow-sm z-[70]">✕</button>
+                )}
+                
+                <div
+                  style={{
+                    width: item.width || 200, height: item.height || 50, 
+                    resize: isLoggedIn && !isSelectMode ? 'both' : 'none', 
+                    overflow: 'hidden', position: 'relative', padding: '8px', 
+                    minWidth: '50px', minHeight: '40px'
+                  }}
+                  onPointerDown={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    if (e.clientX > rect.right - 20 && e.clientY > rect.bottom - 20) e.stopPropagation(); 
+                  }}
+                  onMouseUp={(e) => handleResizeEnd(item.id, e.currentTarget.offsetWidth, e.currentTarget.offsetHeight)}
+                >
+                  <textarea
+                    value={item.content}
+                    onChange={(e) => updateText(item.id, e.target.value)}
+                    disabled={!isLoggedIn || isSelectMode || isPlacing} 
+                    className={`w-full h-full bg-transparent outline-none resize-none font-bold text-zinc-800 ${isLoggedIn && !isSelectMode ? 'border border-dashed border-transparent hover:border-zinc-300 focus:border-zinc-400' : ''}`}
+                    placeholder="输入..."
+                    style={{ fontSize: `${(item.width || 200) * 0.1}px`, lineHeight: 1.2 }}
+                  />
+                </div>
+              </motion.div>
+            );
+          }
+        })}
+      </motion.div>
+
+      {/* 全屏大图查看 */}
+      {fullscreenPhoto && (
+        <div 
+          className="fixed inset-0 z-[100000] bg-black/90 flex flex-col items-center justify-center cursor-zoom-out backdrop-blur-md"
+          onClick={() => setFullscreenPhoto(null)} 
+        >
+          <img src={fullscreenPhoto} alt="Fullscreen view" className="max-w-[95vw] max-h-[90vh] object-contain drop-shadow-2xl rounded-sm" />
+          <p className="text-white/40 text-sm mt-6 font-light tracking-wide pointer-events-none">点击任意空白处返回</p>
+        </div>
+      )}
+
+      {/* 馆长钥匙 */}
+      <div className="absolute bottom-6 right-6 z-[9999]">
+        {isLoggedIn ? (
+          <button onClick={handleLogout} className="px-3 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg shadow-lg font-medium text-sm">🔒 锁回墙内</button>
+        ) : (
+          <button onClick={() => setShowLogin(!showLogin)} className="text-3xl opacity-30 hover:opacity-100 cursor-pointer transform hover:scale-110">🔑</button>
+        )}
+      </div>
+
+      {showLogin && !isLoggedIn && (
+         <div className="absolute bottom-20 right-6 bg-white/90 backdrop-blur-md p-5 rounded-2xl z-[9999] flex flex-col gap-3 shadow-[0_20px_50px_rgba(0,0,0,0.1)] w-64">
+           <p className="font-extrabold text-lg text-zinc-800">馆长通道</p>
+           <input placeholder="邮箱" value={email} onChange={e => setEmail(e.target.value)} className="px-3 py-2 rounded-lg bg-black/5 outline-none font-mono text-sm" />
+           <input placeholder="密码" type="password" value={password} onChange={e => setPassword(e.target.value)} className="px-3 py-2 rounded-lg bg-black/5 outline-none text-sm" />
+           <button onClick={handleLogin} className="mt-2 py-2 bg-zinc-900 text-white font-medium rounded-lg hover:bg-zinc-800">潜入画廊</button>
+         </div>
+      )}
+    </main>
+  );
+}
