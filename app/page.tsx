@@ -290,5 +290,16 @@ export default function Home() {
         )}
       </div>
 
-      {showLogin && !isLoggedIn && (
-        <div style={{ position: 'fixed', bottom: '60px', right: '20px', background: '#fff', padding: '15px', borderRadius: '8px', border: '1px s
+         {showLogin && !isLoggedIn && (
+        <div style={{ position: 'fixed', bottom: '60px', right: '20px', background: '#fff', padding: '15px', borderRadius: '8px', border: '1px solid #ddd', zIndex: 9999, display: 'flex', flexDirection: 'column', gap: '10px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
+          <p style={{ margin: 0, fontWeight: 'bold' }}>馆长通道</p>
+          <input placeholder="邮箱" value={email} onChange={e => setEmail(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+          <input placeholder="密码" type="password" value={password} onChange={e => setPassword(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+          <button onClick={handleLogin} style={{ padding: '8px', background: '#000', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+            开启修改模式
+          </button>
+        </div>
+      )}
+    </main>
+  );
+}
