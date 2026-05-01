@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { createClient } from '@supabase/supabase-js';
 
 // 初始化 Supabase 客户端
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseUrl = "/api/supabase";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
