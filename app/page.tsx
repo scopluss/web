@@ -40,7 +40,6 @@ export default function Home() {
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isPlacing, setIsPlacing] = useState(false);
-  // 🌟 新增：记住当前排版的是“所有图片”还是“选中图片”
   const [placeMode, setPlaceMode] = useState<'selected' | 'all' | null>(null);
 
   useEffect(() => {
@@ -93,9 +92,13 @@ export default function Home() {
       const content = '✍️ 点击修改';
       const tempId = Date.now().toString();
 
-      setItems(prev => [...prev, { id: tempId, type: 'text', content, x: startX, y: startY }]);
+      // 🌟 新增文本框的默认宽高
+      const defaultWidth = 200;
+      const defaultHeight = 50;
+
+      setItems(prev => [...prev, { id: tempId, type: 'text', content, x: startX, y: startY, width: defaultWidth, height: defaultHeight }]);
       const { data } = await supabase.from('canvas_items').insert({
-        item_type: 'text', content, pos_x: startX, pos_y: startY
+        item_type: 'text', content, pos_x: startX, pos_y: startY, width: defaultWidth, height: defaultHeight
       }).select().single();
 
       if (data) setItems(prev => prev.map(item => item.id === tempId ? { ...item, id: data.id } : item));
@@ -164,18 +167,15 @@ export default function Home() {
     await supabase.from('canvas_items').update({ content: newContent }).eq('id', id);
   };
 
-  // 🌟 [触发准备阶段]
   const prepareReArrange = (mode: 'selected' | 'all') => {
     setPlaceMode(mode);
     setIsPlacing(true);
   };
 
-  // 🌟 [执行阵列排版阶段] 兼容“全部图片”和“部分选定图片”
   const executeArrange = async (targetCenterX: number, targetCenterY: number) => {
-    // 根据模式，挑出要排版的元素
     const targetItems = placeMode === 'selected' 
       ? items.filter(i => selectedIds.includes(i.id))
-      : items.filter(i => i.type === 'photo'); // 全图模式下只整理照片，防文字错乱
+      : items.filter(i => i.type === 'photo');
 
     if (targetItems.length === 0) return;
 
@@ -217,7 +217,6 @@ export default function Home() {
       updates.push({ id: pos.id, pos_x: fX, pos_y: fY });
     });
 
-    // 撤销特殊状态
     setItems(newItems);
     setIsPlacing(false);
     setPlaceMode(null);
@@ -255,7 +254,6 @@ export default function Home() {
         {isLoggedIn && (
           <div className="flex flex-wrap items-center gap-3 pointer-events-auto bg-white/90 p-2 rounded-2xl shadow-sm backdrop-blur-md border border-white/50">
             
-            {/* 进入了瞄准放置模式，顶栏全部隐藏，变成提示条 */}
             {isPlacing ? (
               <div className="flex items-center gap-4 px-4 py-2 text-sm rounded-xl font-bold bg-yellow-400 text-black shadow-lg animate-bounce border border-yellow-500">
                 <span>
@@ -278,7 +276,6 @@ export default function Home() {
                   {isSelectMode ? "✅ 退出多选" : "🔲 多选阵列"}
                 </button>
 
-                {/* 🌟 整理全图按钮 (非多选模式下显示) */}
                 {!isSelectMode && (
                   <button 
                     onClick={() => prepareReArrange('all')}
@@ -288,7 +285,6 @@ export default function Home() {
                   </button>
                 )}
 
-                {/* 整理选中项按钮 (多选模式下有选中项时显示) */}
                 {isSelectMode && selectedIds.length > 0 && (
                   <button 
                     onClick={() => prepareReArrange('selected')}
@@ -309,7 +305,7 @@ export default function Home() {
                         <option value={600}>超大图 (600px)</option>
                       </select>
                     </div>
-                    <button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className={`px-4 py-2 text-sm rounded-xl shadow-lg transition-all text-white ${isUploading ? 'bg-zinc-400' : 'bg-zinc-900 hover:scale-105'}`}>
+                    <button onClick={() => fileInputRef.current?.click()} disabled={isUploading || isPlacing} className={`px-4 py-2 text-sm rounded-xl shadow-lg transition-all text-white ${isUploading ? 'bg-zinc-400' : 'bg-zinc-900 hover:scale-105'}`}>
                       {isUploading ? "📸 上传中..." : "+ 批量上传"}
                     </button>
                   </>
@@ -388,7 +384,7 @@ export default function Home() {
             return (
               <motion.div
                 key={item.id}
-                className={`absolute top-0 left-0 text-zinc-700 font-serif text-xl group px-2 py-1 transition-all duration-300
+                className={`absolute top-0 left-0 text-zinc-700 font-serif text-xl group transition-all duration-300
                   ${isLoggedIn && !isSelectMode && !isPlacing ? 'cursor-grab active:cursor-grabbing' : ''}
                   ${isSelectMode && !isPlacing ? 'cursor-pointer hover:bg-blue-50' : ''}
                   ${isSelected ? 'ring-4 ring-blue-500 ring-offset-2 z-[60] bg-white rounded-md scale-105' : ''}
@@ -402,16 +398,35 @@ export default function Home() {
                 whileTap={isLoggedIn && !isSelectMode && !isPlacing ? { zIndex: 50 } : {}}
               >
                 {isLoggedIn && !isSelectMode && (
-                  <button onClick={(e) => handleDelete(item.id, e)} className="absolute -top-4 -right-4 w-6 h-6 bg-zinc-200 text-zinc-600 hover:bg-red-500 hover:text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs shadow-sm z-10">✕</button>
+                  <button onClick={(e) => handleDelete(item.id, e)} className="absolute -top-4 -right-4 w-6 h-6 bg-zinc-200 text-zinc-600 hover:bg-red-500 hover:text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs shadow-sm z-[70]">✕</button>
                 )}
-                <div className="inline-grid items-center pointer-events-none">
-                  <span className="col-start-1 row-start-1 invisible whitespace-pre font-inherit px-1 min-w-[20px]">{item.content || ' '}</span>
-                  <input
-                    type="text"
+                
+                {/* 🌟 修改文本框的内部组件，使其可以调整大小，我们将使用 textarea 以支持换行和多行缩放 */}
+                <div
+                  style={{
+                    width: item.width || 200,
+                    height: item.height || 50,
+                    resize: isLoggedIn && !isSelectMode ? 'both' : 'none',
+                    overflow: 'hidden',
+                    position: 'relative',
+                    padding: '8px', 
+                    // 防止空文本时太小不好拉
+                    minWidth: '100px',
+                    minHeight: '40px'
+                  }}
+                  onPointerDown={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    // 右下角 20px 区域用来缩放，防止拖动事件冒泡
+                    if (e.clientX > rect.right - 20 && e.clientY > rect.bottom - 20) e.stopPropagation(); 
+                  }}
+                  onMouseUp={(e) => handleResizeEnd(item.id, e.currentTarget.offsetWidth, e.currentTarget.offsetHeight)}
+                >
+                  <textarea
                     value={item.content}
                     onChange={(e) => updateText(item.id, e.target.value)}
                     disabled={!isLoggedIn || isSelectMode || isPlacing} 
-                    className={`pointer-events-auto col-start-1 row-start-1 w-full bg-transparent outline-none px-1 ${isLoggedIn && !isSelectMode ? 'border-b border-transparent focus:border-zinc-300' : ''}`}
+                    className={`w-full h-full bg-transparent outline-none resize-none ${isLoggedIn && !isSelectMode ? 'border border-dashed border-transparent hover:border-zinc-300 focus:border-zinc-400' : ''}`}
+                    placeholder="输入文本..."
                   />
                 </div>
               </motion.div>
