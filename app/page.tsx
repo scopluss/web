@@ -4,13 +4,10 @@ import { motion } from 'framer-motion';
 import { createClient } from '@supabase/supabase-js';
 
 // 初始化 Supabase 客户端
-// 告诉它：如果是打包阶段，就用环境里的真实网址；如果是用户打开了浏览器，就走魔法伪装通道
-// 【换成这句】加上了 window.location.origin 帮它自动补全完整的域名
 const supabaseUrl = typeof window !== "undefined" ? `${window.location.origin}/api/supabase` : process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// 🆕 1. 在类型中增加 width 和 height 记忆
 type CanvasItem = {
   id: string;
   type: 'photo' | 'text';
@@ -28,6 +25,9 @@ export default function Home() {
   const [items, setItems] = useState<CanvasItem[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
+  // 🌟 新增：用户选择的初始图片大小（默认256）
+  const [uploadSize, setUploadSize] = useState(256);
+
   // 🎟️ 馆长专属状态
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
@@ -44,7 +44,6 @@ export default function Home() {
     });
   }, []);
 
-  // 🔑 登录退出
   const handleLogin = async () => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
@@ -59,7 +58,6 @@ export default function Home() {
     alert("已锁定画廊，现在是公共浏览模式。");
   };
 
-  // 获取数据 (🆕2. 提取 width 和 height)
   useEffect(() => {
     fetchItems();
   }, []);
@@ -73,8 +71,8 @@ export default function Home() {
         content: item.content,
         x: item.pos_x,
         y: item.pos_y,
-        width: item.width,   // 提取宽度
-        height: item.height  // 提取高度
+        width: item.width,   
+        height: item.height  
       }));
       setItems(formattedItems);
     }
@@ -121,12 +119,12 @@ export default function Home() {
     const { data: publicUrlData } = supabase.storage.from('photos').getPublicUrl(fileName);
     const photoUrl = publicUrlData.publicUrl;
 
-    const startX = window.innerWidth / 2 - 100;
-    const startY = window.innerHeight / 2 - 150;
+    const startX = window.innerWidth / 2 - (uploadSize / 2);
+    const startY = window.innerHeight / 2 - (uploadSize / 2);
 
-    // 🆕3. 上传时给定默认的长宽 256
+    // 🌟 核心：上传时使用用户刚刚选择的 uploadSize，而不是写死的 256
     const { data: dbData, error } = await supabase.from('canvas_items').insert({
-      item_type: 'photo', content: photoUrl, pos_x: startX, pos_y: startY, width: 256, height: 256
+      item_type: 'photo', content: photoUrl, pos_x: startX, pos_y: startY, width: uploadSize, height: uploadSize
     }).select().single();
 
     if (dbData) {
@@ -150,11 +148,8 @@ export default function Home() {
     await supabase.from('canvas_items').update({ pos_x: newX, pos_y: newY }).eq('id', id);
   };
 
-  // 🆕4. 缩放结束，更新数据库尺寸的函数
   const handleResizeEnd = async (id: string, newWidth: number, newHeight: number) => {
-    // 同步到本地
     setItems(prev => prev.map(item => item.id === id ? { ...item, width: newWidth, height: newHeight } : item));
-    // 同步到云端
     await supabase.from('canvas_items').update({ width: newWidth, height: newHeight }).eq('id', id);
   };
 
@@ -183,15 +178,33 @@ export default function Home() {
         </div>
         
         {isLoggedIn && (
-          <button 
-            onClick={triggerFileInput}
-            disabled={isUploading}
-            className={`pointer-events-auto px-4 py-2 text-sm rounded-full shadow-lg transition-all text-white
-              ${isUploading ? 'bg-zinc-400 cursor-not-allowed' : 'bg-zinc-900 hover:bg-zinc-700 hover:scale-105'}
-            `}
-          >
-            {isUploading ? "📸 照片上传中..." : "+ 上传照片"}
-          </button>
+          <div className="flex items-center gap-3 pointer-events-auto bg-white/80 p-2 rounded-2xl shadow-sm backdrop-blur-md">
+            
+            {/* 🌟 新增：图片初始大小选择器 */}
+            <div className="flex items-center gap-2 text-sm text-zinc-600 pl-2">
+              <span>预设大小：</span>
+              <select 
+                value={uploadSize} 
+                onChange={(e) => setUploadSize(Number(e.target.value))}
+                className="bg-transparent border-b border-zinc-300 outline-none cursor-pointer pb-1"
+              >
+                <option value={150}>小图 (150px)</option>
+                <option value={256}>中图 (256px)</option>
+                <option value={400}>大图 (400px)</option>
+                <option value={600}>超大图 (600px)</option>
+              </select>
+            </div>
+
+            <button 
+              onClick={triggerFileInput}
+              disabled={isUploading}
+              className={`px-4 py-2 text-sm rounded-full shadow-lg transition-all text-white
+                ${isUploading ? 'bg-zinc-400 cursor-not-allowed' : 'bg-zinc-900 hover:bg-zinc-700 hover:scale-105'}
+              `}
+            >
+              {isUploading ? "📸 上传中..." : "+ 上传照片"}
+            </button>
+          </div>
         )}
       </div>
 
@@ -201,9 +214,7 @@ export default function Home() {
           return (
             <motion.div
               key={item.id}
-              // 【核心修复1】加上 top-0 left-0 锚定原点
               className={`absolute top-0 left-0 shadow-lg p-2 bg-white pb-8 group ${isLoggedIn ? 'cursor-grab active:cursor-grabbing' : ''}`}
-              // 【核心修复2】把 left/top 改成动画引擎专用的 x/y
               style={{ x: item.x, y: item.y }}
               drag={isLoggedIn}
               dragMomentum={false} 
@@ -218,12 +229,11 @@ export default function Home() {
                 >✕</button>
               )}
 
-              {/* 🆕5. 隐形的调整外壳，里面包裹原图 */}
               <div
                 style={{
                   width: item.width || 256,
                   height: item.height || 256,
-                  resize: isLoggedIn ? 'both' : 'none', // 登录后开启拖拽条
+                  resize: isLoggedIn ? 'both' : 'none', 
                   overflow: 'hidden',
                   position: 'relative'
                 }}
@@ -250,9 +260,7 @@ export default function Home() {
           return (
             <motion.div
               key={item.id}
-              // 【核心修复3】加上 top-0 left-0 锚定原点
               className={`absolute top-0 left-0 text-zinc-700 font-serif text-xl group px-2 py-1 ${isLoggedIn ? 'cursor-grab active:cursor-grabbing' : ''}`}
-              // 【核心修复4】把 left/top 改成动画引擎专用的 x/y
               style={{ x: item.x, y: item.y }}
               drag={isLoggedIn}
               dragMomentum={false}
