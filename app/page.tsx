@@ -39,8 +39,9 @@ export default function Home() {
   // 🌟 多选与排版状态
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  // 🌟 [新增] 是否处于“等待用户点击选择中心点”的状态
   const [isPlacing, setIsPlacing] = useState(false);
+  // 🌟 新增：记住当前排版的是“所有图片”还是“选中图片”
+  const [placeMode, setPlaceMode] = useState<'selected' | 'all' | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => setIsLoggedIn(!!session));
@@ -67,6 +68,7 @@ export default function Home() {
     setIsSelectMode(false);
     setSelectedIds([]);
     setIsPlacing(false);
+    setPlaceMode(null);
     alert("已锁定画廊，现在是公共浏览模式。");
   };
 
@@ -162,24 +164,28 @@ export default function Home() {
     await supabase.from('canvas_items').update({ content: newContent }).eq('id', id);
   };
 
-  // 🌟 [新增核心] 第一步：点击整理按钮，进入“等待放置瞄准”模式
-  const prepareReArrange = () => {
+  // 🌟 [触发准备阶段]
+  const prepareReArrange = (mode: 'selected' | 'all') => {
+    setPlaceMode(mode);
     setIsPlacing(true);
   };
 
-  // 🌟 [新增核心] 第二步：点击画布拿到中心点后，正式干活排版
+  // 🌟 [执行阵列排版阶段] 兼容“全部图片”和“部分选定图片”
   const executeArrange = async (targetCenterX: number, targetCenterY: number) => {
-    if (selectedIds.length === 0) return;
+    // 根据模式，挑出要排版的元素
+    const targetItems = placeMode === 'selected' 
+      ? items.filter(i => selectedIds.includes(i.id))
+      : items.filter(i => i.type === 'photo'); // 全图模式下只整理照片，防文字错乱
 
-    const selectedItems = items.filter(i => selectedIds.includes(i.id));
-    const cols = Math.ceil(Math.sqrt(selectedItems.length));
+    if (targetItems.length === 0) return;
+
+    const cols = Math.ceil(Math.sqrt(targetItems.length));
     const gap = 40; 
 
-    // 先在虚拟空间里把网格排好，以算出整个网格到底有多大
     const layoutMap: {id: string, x: number, y: number}[] = [];
-    let curX = 0, curY = 0, rowMaxH = 0, minOffsetX = 0, maxOffsetX = 0, maxOffsetY = 0;
+    let curX = 0, curY = 0, rowMaxH = 0, maxOffsetX = 0, maxOffsetY = 0;
 
-    selectedItems.forEach((item, index) => {
+    targetItems.forEach((item, index) => {
       if (index > 0 && index % cols === 0) {
         curX = 0; 
         curY += rowMaxH + gap;
@@ -196,14 +202,12 @@ export default function Home() {
       maxOffsetY = Math.max(maxOffsetY, curY + ih);
     });
 
-    // 计算为了让网格完美居中在你点击的地方，起始点的偏移应该是多少
     const startX = targetCenterX - (maxOffsetX / 2);
     const startY = targetCenterY - (maxOffsetY / 2);
 
     const newItems = [...items];
     const updates: any[] = [];
 
-    // 应用最终的真实坐标
     layoutMap.forEach((pos) => {
       const fX = startX + pos.x;
       const fY = startY + pos.y;
@@ -213,13 +217,13 @@ export default function Home() {
       updates.push({ id: pos.id, pos_x: fX, pos_y: fY });
     });
 
-    // 瞬间归位，解除选定和瞄准模式
+    // 撤销特殊状态
     setItems(newItems);
     setIsPlacing(false);
+    setPlaceMode(null);
     setIsSelectMode(false);
     setSelectedIds([]);
 
-    // 异步同步到数据库
     await Promise.all(updates.map(u => 
       supabase.from('canvas_items').update({ pos_x: u.pos_x, pos_y: u.pos_y }).eq('id', u.id)
     ));
@@ -251,42 +255,65 @@ export default function Home() {
         {isLoggedIn && (
           <div className="flex flex-wrap items-center gap-3 pointer-events-auto bg-white/90 p-2 rounded-2xl shadow-sm backdrop-blur-md border border-white/50">
             
-            <button 
-              onClick={() => { setIsSelectMode(!isSelectMode); setSelectedIds([]); setIsPlacing(false); }}
-              className={`px-3 py-2 text-sm rounded-xl font-bold transition-all shadow-sm ${isSelectMode ? 'bg-blue-100 text-blue-600 border border-blue-300' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}
-            >
-              {isSelectMode ? "✅ 退出多选" : "🔲 多选阵列"}
-            </button>
-
-            {isSelectMode && selectedIds.length > 0 && !isPlacing && (
-              <button 
-                onClick={prepareReArrange}
-                className="px-4 py-2 text-sm rounded-xl font-bold transition-all bg-blue-600 text-white hover:bg-blue-500 shadow-lg animate-pulse"
-              >
-                ✨ 智能整理 ({selectedIds.length}项)
-              </button>
-            )}
-
-            {isPlacing && (
-              <div className="px-4 py-2 text-sm rounded-xl font-bold bg-yellow-400 text-black shadow-lg animate-bounce border border-yellow-500">
-                👇 准星已开启：请点击下方空地选择“放置中心点”
-              </div>
-            )}
-
-            {!isSelectMode && (
-              <>
-                <div className="flex items-center gap-2 text-sm text-zinc-600 pl-2 border-l border-zinc-200">
-                  <span>大小：</span>
-                  <select value={uploadSize} onChange={(e) => setUploadSize(Number(e.target.value))} className="bg-transparent font-bold outline-none cursor-pointer">
-                    <option value={150}>小图 (150px)</option>
-                    <option value={256}>中图 (256px)</option>
-                    <option value={400}>大图 (400px)</option>
-                    <option value={600}>超大图 (600px)</option>
-                  </select>
-                </div>
-                <button onClick={() => fileInputRef.current?.click()} disabled={isUploading || isPlacing} className={`px-4 py-2 text-sm rounded-xl shadow-lg transition-all text-white ${isUploading ? 'bg-zinc-400' : 'bg-zinc-900 hover:scale-105'}`}>
-                  {isUploading ? "📸 上传中..." : "+ 批量上传"}
+            {/* 进入了瞄准放置模式，顶栏全部隐藏，变成提示条 */}
+            {isPlacing ? (
+              <div className="flex items-center gap-4 px-4 py-2 text-sm rounded-xl font-bold bg-yellow-400 text-black shadow-lg animate-bounce border border-yellow-500">
+                <span>
+                  👇 准星已开启：请点击下方空地选择 
+                  {placeMode === 'all' ? ` 所有图片(${items.filter(i=>i.type==='photo').length}项)` : ` 选中项(${selectedIds.length}项)`} 的中心点
+                </span>
+                <button 
+                  onClick={() => { setIsPlacing(false); setPlaceMode(null); }} 
+                  className="px-2 py-1 bg-black/10 hover:bg-black/20 rounded-md transition-colors"
+                >
+                  取消
                 </button>
+              </div>
+            ) : (
+              <>
+                <button 
+                  onClick={() => { setIsSelectMode(!isSelectMode); setSelectedIds([]); }}
+                  className={`px-3 py-2 text-sm rounded-xl font-bold transition-all shadow-sm ${isSelectMode ? 'bg-blue-100 text-blue-600 border border-blue-300' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}
+                >
+                  {isSelectMode ? "✅ 退出多选" : "🔲 多选阵列"}
+                </button>
+
+                {/* 🌟 整理全图按钮 (非多选模式下显示) */}
+                {!isSelectMode && (
+                  <button 
+                    onClick={() => prepareReArrange('all')}
+                    className="px-3 py-2 text-sm rounded-xl font-bold transition-all bg-purple-600 text-white hover:bg-purple-500 shadow-sm"
+                  >
+                    🌌 整理全图 ({items.filter(i => i.type==='photo').length}项)
+                  </button>
+                )}
+
+                {/* 整理选中项按钮 (多选模式下有选中项时显示) */}
+                {isSelectMode && selectedIds.length > 0 && (
+                  <button 
+                    onClick={() => prepareReArrange('selected')}
+                    className="px-4 py-2 text-sm rounded-xl font-bold transition-all bg-blue-600 text-white hover:bg-blue-500 shadow-lg animate-pulse"
+                  >
+                    ✨ 智能整理 ({selectedIds.length}项)
+                  </button>
+                )}
+
+                {!isSelectMode && (
+                  <>
+                    <div className="flex items-center gap-2 text-sm text-zinc-600 pl-2 border-l border-zinc-200">
+                      <span>大小：</span>
+                      <select value={uploadSize} onChange={(e) => setUploadSize(Number(e.target.value))} className="bg-transparent font-bold outline-none cursor-pointer">
+                        <option value={150}>小图 (150px)</option>
+                        <option value={256}>中图 (256px)</option>
+                        <option value={400}>大图 (400px)</option>
+                        <option value={600}>超大图 (600px)</option>
+                      </select>
+                    </div>
+                    <button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className={`px-4 py-2 text-sm rounded-xl shadow-lg transition-all text-white ${isUploading ? 'bg-zinc-400' : 'bg-zinc-900 hover:scale-105'}`}>
+                      {isUploading ? "📸 上传中..." : "+ 批量上传"}
+                    </button>
+                  </>
+                )}
               </>
             )}
           </div>
@@ -311,7 +338,6 @@ export default function Home() {
           id="canvas-handle"
           className="absolute w-[1000vw] h-[1000vh] -left-[450vw] -top-[450vh] active:cursor-grabbing"
           style={{ backgroundImage: 'radial-gradient(#d4d4d8 1.5px, transparent 1.5px)', backgroundSize: `48px 48px`, backgroundPosition: 'center center' }}
-          // 🌟 [新增核心] 第三步：监听背景点击，如果是瞄准模式就引爆手雷！
           onClick={(e) => {
             if (isPlacing) {
               const { x, y } = getCanvasPos(e.clientX, e.clientY);
@@ -378,16 +404,16 @@ export default function Home() {
                 {isLoggedIn && !isSelectMode && (
                   <button onClick={(e) => handleDelete(item.id, e)} className="absolute -top-4 -right-4 w-6 h-6 bg-zinc-200 text-zinc-600 hover:bg-red-500 hover:text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs shadow-sm z-10">✕</button>
                 )}
-              <div className="inline-grid items-center pointer-events-none">
-                <span className="col-start-1 row-start-1 invisible whitespace-pre font-inherit px-1 min-w-[20px]">{item.content || ' '}</span>
-                <input
-                  type="text"
-                  value={item.content}
-                  onChange={(e) => updateText(item.id, e.target.value)}
-                  disabled={!isLoggedIn || isSelectMode || isPlacing} 
-                  className={`pointer-events-auto col-start-1 row-start-1 w-full bg-transparent outline-none px-1 ${isLoggedIn && !isSelectMode ? 'border-b border-transparent focus:border-zinc-300' : ''}`}
-                />
-              </div>
+                <div className="inline-grid items-center pointer-events-none">
+                  <span className="col-start-1 row-start-1 invisible whitespace-pre font-inherit px-1 min-w-[20px]">{item.content || ' '}</span>
+                  <input
+                    type="text"
+                    value={item.content}
+                    onChange={(e) => updateText(item.id, e.target.value)}
+                    disabled={!isLoggedIn || isSelectMode || isPlacing} 
+                    className={`pointer-events-auto col-start-1 row-start-1 w-full bg-transparent outline-none px-1 ${isLoggedIn && !isSelectMode ? 'border-b border-transparent focus:border-zinc-300' : ''}`}
+                  />
+                </div>
               </motion.div>
             );
           }
@@ -404,11 +430,10 @@ export default function Home() {
 
       {showLogin && !isLoggedIn && (
          <div className="absolute bottom-20 right-6 bg-white/90 backdrop-blur-md p-5 rounded-2xl z-[9999] flex flex-col gap-3 shadow-[0_20px_50px_rgba(0,0,0,0.1)] w-64">
-           {/* ... 省略代码以保持清爽，这块原封不动 */}
            <p className="font-extrabold text-lg text-zinc-800">馆长通道</p>
-           <input placeholder="邮箱" value={email} onChange={e => setEmail(e.target.value)} className="px-3 py-2 rounded-lg bg-black/5 outline-none " />
-           <input placeholder="密码" type="password" value={password} onChange={e => setPassword(e.target.value)} className="px-3 py-2 rounded-lg bg-black/5 outline-none" />
-           <button onClick={handleLogin} className="mt-2 py-2 bg-zinc-900 text-white font-medium rounded-lg">潜入画廊</button>
+           <input placeholder="邮箱" value={email} onChange={e => setEmail(e.target.value)} className="px-3 py-2 rounded-lg bg-black/5 outline-none font-mono text-sm" />
+           <input placeholder="密码" type="password" value={password} onChange={e => setPassword(e.target.value)} className="px-3 py-2 rounded-lg bg-black/5 outline-none text-sm" />
+           <button onClick={handleLogin} className="mt-2 py-2 bg-zinc-900 text-white font-medium rounded-lg hover:bg-zinc-800">潜入画廊</button>
          </div>
       )}
     </main>
