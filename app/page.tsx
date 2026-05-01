@@ -285,14 +285,22 @@ export default function Home() {
                 {isLoggedIn && (
                   <button onClick={(e) => handleDelete(item.id, e)} className="absolute -top-4 -right-4 w-6 h-6 bg-zinc-200 text-zinc-600 hover:bg-red-500 hover:text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs shadow-sm z-10">✕</button>
                 )}
+                              {/* 🌟 核心修复：自动完美回弹撑开宽度 */}
+              <div className="inline-grid items-center">
+                {/* 隐形尺子：专门用来在底层撑开真实宽度的，透明看不见 */}
+                <span className="col-start-1 row-start-1 invisible whitespace-pre font-inherit px-1 min-w-[20px]">
+                  {item.content || ' '}
+                </span>
+                {/* 真正的输入框：贴着隐形尺子的宽度铺满 */}
                 <input
                   type="text"
                   value={item.content}
-                  onChange={(e) => updateText(item.id, e.target.value)}
+                  onChange={(e) => updateTextLocally(item.id, e.target.value)}
+                  onBlur={(e) => handleTextBlur(item.id, e.target.value)}
                   disabled={!isLoggedIn} 
-                  className={`bg-transparent outline-none w-auto ${isLoggedIn ? 'border-b border-transparent focus:border-zinc-300' : ''}`}
-                  style={{ width: `${Math.max(item.content.length, 4)}ch` }}
+                  className={`col-start-1 row-start-1 w-full bg-transparent outline-none px-1 ${isLoggedIn ? 'border-b border-transparent focus:border-zinc-300' : ''}`}
                 />
+              </div>
               </motion.div>
             );
           }
