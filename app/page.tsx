@@ -3,7 +3,6 @@ import { useState, useRef, useEffect } from 'react';
 import { motion, useMotionValue } from 'framer-motion';
 import { createClient } from '@supabase/supabase-js';
 
-// 初始化 Supabase 客户端
 const supabaseUrl = typeof window !== "undefined" ? `${window.location.origin}/api/supabase` : process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
@@ -25,22 +24,21 @@ export default function Home() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadSize, setUploadSize] = useState(256);
 
-  // 🎟️ 馆长与登录状态
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  // 🔍 相机控制状态
   const [scale, setScale] = useState(1);
   const panX = useMotionValue(0);
   const panY = useMotionValue(0);
 
-  // 🌟 多选与排版状态
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isPlacing, setIsPlacing] = useState(false);
   const [placeMode, setPlaceMode] = useState<'selected' | 'all' | null>(null);
+
+  const [fullscreenPhoto, setFullscreenPhoto] = useState<string | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => setIsLoggedIn(!!session));
@@ -90,11 +88,10 @@ export default function Home() {
     if ((e.target as HTMLElement).id === 'canvas-handle') {
       const { x: startX, y: startY } = getCanvasPos(e.clientX - 60, e.clientY - 15);
       const content = '✍️ 点击修改';
-      const tempId = Date.now().toString();
-
-      // 🌟 新增文本框的默认宽高
+      
       const defaultWidth = 200;
       const defaultHeight = 50;
+      const tempId = Date.now().toString();
 
       setItems(prev => [...prev, { id: tempId, type: 'text', content, x: startX, y: startY, width: defaultWidth, height: defaultHeight }]);
       const { data } = await supabase.from('canvas_items').insert({
@@ -247,49 +244,37 @@ export default function Home() {
         <div>
           <h1 className="text-3xl font-bold text-zinc-800 tracking-tighter">My Canvas.</h1>
           <p className="text-sm text-zinc-500 mt-1 drop-shadow-sm font-medium">
-            {isLoggedIn ? "拖拽排版 / 右下缩放 / 开启多选即可全自动对齐" : "游客体验模式 (按住屏幕空地拖拽、用滚轮漫游)"}
+            {isLoggedIn ? "拖拽排版 / 双击图片放大 / 双击空地加字" : "双击图片全屏放大 / 按住屏幕空地拖拽、用滚轮漫游"}
           </p>
         </div>
         
         {isLoggedIn && (
           <div className="flex flex-wrap items-center gap-3 pointer-events-auto bg-white/90 p-2 rounded-2xl shadow-sm backdrop-blur-md border border-white/50">
-            
             {isPlacing ? (
               <div className="flex items-center gap-4 px-4 py-2 text-sm rounded-xl font-bold bg-yellow-400 text-black shadow-lg animate-bounce border border-yellow-500">
                 <span>
                   👇 准星已开启：请点击下方空地选择 
                   {placeMode === 'all' ? ` 所有图片(${items.filter(i=>i.type==='photo').length}项)` : ` 选中项(${selectedIds.length}项)`} 的中心点
                 </span>
-                <button 
-                  onClick={() => { setIsPlacing(false); setPlaceMode(null); }} 
-                  className="px-2 py-1 bg-black/10 hover:bg-black/20 rounded-md transition-colors"
-                >
+                <button onClick={() => { setIsPlacing(false); setPlaceMode(null); }} className="px-2 py-1 bg-black/10 hover:bg-black/20 rounded-md transition-colors">
                   取消
                 </button>
               </div>
             ) : (
               <>
-                <button 
-                  onClick={() => { setIsSelectMode(!isSelectMode); setSelectedIds([]); }}
-                  className={`px-3 py-2 text-sm rounded-xl font-bold transition-all shadow-sm ${isSelectMode ? 'bg-blue-100 text-blue-600 border border-blue-300' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}
-                >
+                <button onClick={() => { setIsSelectMode(!isSelectMode); setSelectedIds([]); }}
+                  className={`px-3 py-2 text-sm rounded-xl font-bold transition-all shadow-sm ${isSelectMode ? 'bg-blue-100 text-blue-600 border border-blue-300' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
                   {isSelectMode ? "✅ 退出多选" : "🔲 多选阵列"}
                 </button>
 
                 {!isSelectMode && (
-                  <button 
-                    onClick={() => prepareReArrange('all')}
-                    className="px-3 py-2 text-sm rounded-xl font-bold transition-all bg-purple-600 text-white hover:bg-purple-500 shadow-sm"
-                  >
+                  <button onClick={() => prepareReArrange('all')} className="px-3 py-2 text-sm rounded-xl font-bold transition-all bg-purple-600 text-white hover:bg-purple-500 shadow-sm">
                     🌌 整理全图 ({items.filter(i => i.type==='photo').length}项)
                   </button>
                 )}
 
                 {isSelectMode && selectedIds.length > 0 && (
-                  <button 
-                    onClick={() => prepareReArrange('selected')}
-                    className="px-4 py-2 text-sm rounded-xl font-bold transition-all bg-blue-600 text-white hover:bg-blue-500 shadow-lg animate-pulse"
-                  >
+                  <button onClick={() => prepareReArrange('selected')} className="px-4 py-2 text-sm rounded-xl font-bold transition-all bg-blue-600 text-white hover:bg-blue-500 shadow-lg animate-pulse">
                     ✨ 智能整理 ({selectedIds.length}项)
                   </button>
                 )}
@@ -358,6 +343,12 @@ export default function Home() {
                 style={{ x: item.x, y: item.y }}
                 drag={isLoggedIn && !isSelectMode && !isPlacing}
                 onClick={(e) => handleItemClick(item.id, e)}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  if (!isSelectMode && !isPlacing) {
+                    setFullscreenPhoto(item.content);
+                  }
+                }}
                 dragMomentum={false} 
                 onDragEnd={(e, info) => handleDragEnd(item.id, item.x, item.y, info)}
                 whileHover={isLoggedIn && !isSelectMode && !isPlacing ? { scale: 1.02 } : {}} 
@@ -384,7 +375,8 @@ export default function Home() {
             return (
               <motion.div
                 key={item.id}
-                className={`absolute top-0 left-0 text-zinc-700 font-serif text-xl group transition-all duration-300
+                // 🌟 删除了固定的 text-xl，让它受内部动态 font-size 控制
+                className={`absolute top-0 left-0 font-serif group transition-all duration-300
                   ${isLoggedIn && !isSelectMode && !isPlacing ? 'cursor-grab active:cursor-grabbing' : ''}
                   ${isSelectMode && !isPlacing ? 'cursor-pointer hover:bg-blue-50' : ''}
                   ${isSelected ? 'ring-4 ring-blue-500 ring-offset-2 z-[60] bg-white rounded-md scale-105' : ''}
@@ -401,22 +393,19 @@ export default function Home() {
                   <button onClick={(e) => handleDelete(item.id, e)} className="absolute -top-4 -right-4 w-6 h-6 bg-zinc-200 text-zinc-600 hover:bg-red-500 hover:text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs shadow-sm z-[70]">✕</button>
                 )}
                 
-                {/* 🌟 修改文本框的内部组件，使其可以调整大小，我们将使用 textarea 以支持换行和多行缩放 */}
                 <div
                   style={{
-                    width: item.width || 200,
-                    height: item.height || 50,
-                    resize: isLoggedIn && !isSelectMode ? 'both' : 'none',
-                    overflow: 'hidden',
-                    position: 'relative',
+                    width: item.width || 200, 
+                    height: item.height || 50, 
+                    resize: isLoggedIn && !isSelectMode ? 'both' : 'none', 
+                    overflow: 'hidden', 
+                    position: 'relative', 
                     padding: '8px', 
-                    // 防止空文本时太小不好拉
-                    minWidth: '100px',
+                    minWidth: '50px', 
                     minHeight: '40px'
                   }}
                   onPointerDown={(e) => {
                     const rect = e.currentTarget.getBoundingClientRect();
-                    // 右下角 20px 区域用来缩放，防止拖动事件冒泡
                     if (e.clientX > rect.right - 20 && e.clientY > rect.bottom - 20) e.stopPropagation(); 
                   }}
                   onMouseUp={(e) => handleResizeEnd(item.id, e.currentTarget.offsetWidth, e.currentTarget.offsetHeight)}
@@ -425,8 +414,13 @@ export default function Home() {
                     value={item.content}
                     onChange={(e) => updateText(item.id, e.target.value)}
                     disabled={!isLoggedIn || isSelectMode || isPlacing} 
-                    className={`w-full h-full bg-transparent outline-none resize-none ${isLoggedIn && !isSelectMode ? 'border border-dashed border-transparent hover:border-zinc-300 focus:border-zinc-400' : ''}`}
+                    className={`w-full h-full bg-transparent outline-none resize-none font-bold text-zinc-800 ${isLoggedIn && !isSelectMode ? 'border border-dashed border-transparent hover:border-zinc-300 focus:border-zinc-400' : ''}`}
                     placeholder="输入文本..."
+                    // 🌟 核心魔法：让 textarea 里的字体大小跟外框的宽度等比例放大！
+                    style={{
+                      fontSize: `${(item.width || 200) * 0.1}px`,
+                      lineHeight: 1.2
+                    }}
                   />
                 </div>
               </motion.div>
@@ -434,6 +428,21 @@ export default function Home() {
           }
         })}
       </motion.div>
+
+      {fullscreenPhoto && (
+        <div 
+          className="fixed inset-0 z-[100000] bg-black/90 flex flex-col items-center justify-center cursor-zoom-out backdrop-blur-md transition-opacity duration-300"
+          onClick={() => setFullscreenPhoto(null)} 
+        >
+          <img 
+            src={fullscreenPhoto} 
+            alt="Fullscreen view" 
+            className="max-w-[95vw] max-h-[90vh] object-contain drop-shadow-2xl rounded-sm"
+          />
+          <p className="text-white/40 text-sm mt-6 font-light tracking-wide pointer-events-none">点击任意空白处返回</p>
+          <button className="absolute top-8 right-8 text-white/50 hover:text-white text-4xl font-light transition-colors">✕</button>
+        </div>
+      )}
 
       <div className="absolute bottom-6 right-6 z-[9999]">
         {isLoggedIn ? (
