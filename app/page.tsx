@@ -24,13 +24,10 @@ export default function Home() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  // 🌟 把缩放也丢给 GPU 引擎处理，避免 React 重绘卡顿
   const scale = useMotionValue(1);
   const panX = useMotionValue(0);
   const panY = useMotionValue(0);
-  const [scaleUI, setScaleUI] = useState(1); // 仅用来显示百分比文字
-
-  // 同步底层 motion 到显示文字（不触发重绘）
+  const [scaleUI, setScaleUI] = useState(1); 
   useMotionValueEvent(scale, "change", (latest) => setScaleUI(latest));
 
   const [isSelectMode, setIsSelectMode] = useState(false);
@@ -39,6 +36,11 @@ export default function Home() {
   const [placeMode, setPlaceMode] = useState<'selected' | 'all' | null>(null);
 
   const [fullscreenPhoto, setFullscreenPhoto] = useState<string | null>(null);
+
+  // 🌟 [新增核心] 手搓一套最可靠的高精度绝对拖移记录器！
+  const dragCtx = useRef<{ id: string | null, startX: number, startY: number, initX: number, initY: number }>({ 
+    id: null, startX: 0, startY: 0, initX: 0, initY: 0 
+  });
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => setIsLoggedIn(!!session));
@@ -57,7 +59,7 @@ export default function Home() {
   const handleLogin = async () => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (!error) { alert("画廊修改权限已解锁！"); setShowLogin(false); }
-    else { alert("邮箱或密码错误！"); }
+    else alert("邮箱或密码错误！");
   };
   
   const handleLogout = async () => {
@@ -66,7 +68,6 @@ export default function Home() {
     alert("已锁定画廊，现在是公共浏览模式。");
   };
 
-  // 🌟 坐标魔法：实时提取底层真实缩放值
   const getCanvasPos = (screenX: number, screenY: number) => {
     const cx = window.innerWidth / 2; const cy = window.innerHeight / 2;
     const s = scale.get();
@@ -77,6 +78,38 @@ export default function Home() {
     if(e.ctrlKey) return; 
     panX.set(panX.get() - e.deltaX); 
     panY.set(panY.get() - e.deltaY);
+  };
+
+  // 🌟 手搓高精度粘手拖拽：开始拖拽
+  const startDragItem = (id: string, initX: number, initY: number, e: React.PointerEvent) => {
+    if (!isLoggedIn || isSelectMode || isPlacing) return;
+    e.stopPropagation(); // 阻止背景跟跑
+    dragCtx.current = { id, startX: e.clientX, startY: e.clientY, initX, initY };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  // 🌟 手搓高精度粘手拖拽：拖拽移动中（极其丝滑不掉帧）
+  const doDragItem = (e: React.PointerEvent) => {
+    if (dragCtx.current.id) {
+      const s = scale.get();
+      const dx = (e.clientX - dragCtx.current.startX) / s;
+      const dy = (e.clientY - dragCtx.current.startY) / s;
+      setItems(prev => prev.map(item => item.id === dragCtx.current.id ? { ...item, x: dragCtx.current.initX + dx, y: dragCtx.current.initY + dy } : item));
+    }
+  };
+
+  // 🌟 手搓高精度粘手拖拽：松开保存绝对坐标（杜绝残影，永不乱飞）
+  const stopDragItem = async (e: React.PointerEvent) => {
+    const id = dragCtx.current.id;
+    if (id) {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      dragCtx.current.id = null; // 斩掉状态
+
+      const targetItem = items.find(i => i.id === id);
+      if (targetItem) {
+        await supabase.from('canvas_items').update({ pos_x: targetItem.x, pos_y: targetItem.y }).eq('id', id);
+      }
+    }
   };
 
   const handleDoubleClick = async (e: React.MouseEvent) => {
@@ -119,19 +152,10 @@ export default function Home() {
     setIsUploading(false);
   };
 
-  const handleDelete = async (id: string, e: React.MouseEvent) => {
+  const handleDelete = async (id: string, e: React.MouseEvent | React.PointerEvent) => {
     e.stopPropagation();
     setItems(prev => prev.filter(item => item.id !== id));
     await supabase.from('canvas_items').delete().eq('id', id);
-  };
-
-  // 🌟 修复乱飞：提取底层实时缩放计算偏移
-  const handleDragEnd = async (id: string, currentX: number, currentY: number, dragInfo: any) => {
-    const s = scale.get();
-    const newX = currentX + dragInfo.offset.x / s;
-    const newY = currentY + dragInfo.offset.y / s;
-    setItems(prev => prev.map(item => item.id === id ? { ...item, x: newX, y: newY } : item));
-    await supabase.from('canvas_items').update({ pos_x: newX, pos_y: newY }).eq('id', id);
   };
 
   const handleResizeEnd = async (id: string, newWidth: number, newHeight: number) => {
@@ -169,7 +193,7 @@ export default function Home() {
     const startX = targetCenterX - (maxOffsetX / 2); 
     const startY = targetCenterY - (maxOffsetY / 2);
     const newItems = [...items]; 
-    const updates: {id: string, pos_x: number, pos_y: number}[] = []; // 🌟 类型修复
+    const updates: {id: string, pos_x: number, pos_y: number}[] = [];
 
     layoutMap.forEach((pos) => {
       const fX = startX + pos.x; 
@@ -202,7 +226,7 @@ export default function Home() {
         <div>
           <h1 className="text-3xl font-bold text-zinc-800 tracking-tighter">My Canvas.</h1>
           <p className="text-sm text-zinc-500 mt-1 drop-shadow-sm font-medium">
-            {isLoggedIn ? "拖拽排版 / 双击图片放大 / 双击空地加字" : "双击图片全屏放大 / 按住屏幕空地拖拽、用滚轮漫游"}
+            {isLoggedIn ? "拖拽排版 / 双击放大 / 双击空地加字" : "双击全屏放大 / 按住屏幕空地拖拽"}
           </p>
         </div>
         
@@ -211,7 +235,7 @@ export default function Home() {
             {isPlacing ? (
               <div className="flex items-center gap-4 px-4 py-2 text-sm rounded-xl font-bold bg-yellow-400 text-black shadow-lg animate-bounce border border-yellow-500">
                 <span>👇 准星已开启：请点击下方空地选择 
-                  {placeMode === 'all' ? ` 所有图片(${items.filter(i=>i.type==='photo').length}项)` : ` 选中项(${selectedIds.length}项)`} 的中心点
+                  {placeMode === 'all' ? ` 所有图片(${items.filter(i=>i.type==='photo').length}项)` : ` 选中项(${selectedIds.length}项)`} 中心
                 </span>
                 <button onClick={() => { setIsPlacing(false); setPlaceMode(null); }} className="px-2 py-1 bg-black/10 hover:bg-black/20 rounded-md transition-colors">取消</button>
               </div>
@@ -262,7 +286,6 @@ export default function Home() {
         <button onClick={() => scale.set(Math.min(5, scale.get() * 1.2))} className="text-xl px-2 hover:scale-125 transition-transform text-zinc-600">+</button>
       </div>
 
-      {/* 🌟 关键：这里的 x/y/scale 全部直连底层 GPU 引擎，拖动100%不掉帧 */}
       <motion.div
         className="absolute top-0 left-0 w-screen h-screen"
         style={{ x: panX, y: panY, scale }}
@@ -272,11 +295,7 @@ export default function Home() {
         <div 
           id="canvas-handle"
           className="absolute active:cursor-grabbing"
-          style={{ 
-            width: '10000vw', height: '10000vh', left: '-5000vw', top: '-5000vh',
-            backgroundImage: 'radial-gradient(#d4d4d8 1.5px, transparent 1.5px)', 
-            backgroundSize: `48px 48px`, backgroundPosition: 'center center' 
-          }}
+          style={{ width: '10000vw', height: '10000vh', left: '-5000vw', top: '-5000vh', backgroundImage: 'radial-gradient(#d4d4d8 1.5px, transparent 1.5px)', backgroundSize: `48px 48px`, backgroundPosition: 'center center' }}
           onClick={(e) => {
             if (isPlacing) {
               const { x, y } = getCanvasPos(e.clientX, e.clientY);
@@ -292,30 +311,37 @@ export default function Home() {
             return (
               <motion.div
                 key={item.id}
-                className={`absolute top-0 left-0 shadow-lg p-2 bg-white pb-8 group
+                // 🌟 改为真正的绝对定位 (left/top)
+                className={`absolute shadow-lg p-2 bg-white pb-8 group
                   ${isLoggedIn && !isSelectMode && !isPlacing ? 'cursor-grab active:cursor-grabbing' : ''}
                   ${isSelectMode && !isPlacing ? 'cursor-pointer hover:bg-blue-50' : ''}
                   ${isSelected ? 'ring-4 ring-blue-500 ring-offset-2 z-[60]' : ''}
                   ${isPlacing ? 'pointer-events-none opacity-50' : ''} 
                 `}
-                style={{ x: item.x, y: item.y }}
-                drag={isLoggedIn && !isSelectMode && !isPlacing}
+                style={{ left: item.x, top: item.y }}
+                // 🌟 新绑定：手动底层拖拽引擎！
+                onPointerDown={(e) => startDragItem(item.id, item.x, item.y, e)}
+                onPointerMove={doDragItem}
+                onPointerUp={stopDragItem}
+                onPointerCancel={stopDragItem}
+
                 onClick={(e) => handleItemClick(item.id, e)}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
                   if (!isSelectMode && !isPlacing) setFullscreenPhoto(item.content);
                 }}
-                dragMomentum={false} 
-                onDragEnd={(e, info) => handleDragEnd(item.id, item.x, item.y, info)}
               >
                 {isLoggedIn && !isSelectMode && (
-                  <button onClick={(e) => handleDelete(item.id, e)} className="absolute -top-3 -right-3 w-7 h-7 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs shadow-md z-10">✕</button>
+                  <button onPointerDown={(e) => handleDelete(item.id, e)} className="absolute -top-3 -right-3 w-7 h-7 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs shadow-md z-10">✕</button>
                 )}
                 <div
                   style={{ width: item.width || 256, height: item.height || 256, resize: isLoggedIn && !isSelectMode ? 'both' : 'none', overflow: 'hidden', position: 'relative' }}
                   onPointerDown={(e) => {
                     const rect = e.currentTarget.getBoundingClientRect();
-                    if (e.clientX > rect.right - 20 && e.clientY > rect.bottom - 20) e.stopPropagation(); 
+                    // 防止拖拽和缩放产生冲突
+                    if (e.clientX > rect.right - 20 && e.clientY > rect.bottom - 20) {
+                       e.stopPropagation();
+                    }
                   }}
                   onMouseUp={(e) => handleResizeEnd(item.id, e.currentTarget.offsetWidth, e.currentTarget.offsetHeight)}
                 >
@@ -329,19 +355,20 @@ export default function Home() {
             return (
               <motion.div
                 key={item.id}
-                className={`absolute top-0 left-0 text-zinc-700 font-serif group
+                className={`absolute text-zinc-700 font-serif group
                   ${isLoggedIn && !isSelectMode && !isPlacing ? 'cursor-grab active:cursor-grabbing' : ''}
                   ${isSelected ? 'ring-4 ring-blue-500 ring-offset-2 z-[60] bg-white rounded-md' : ''}
                   ${isPlacing ? 'pointer-events-none opacity-50' : ''}
                 `}
-                style={{ x: item.x, y: item.y }}
-                drag={isLoggedIn && !isSelectMode && !isPlacing}
+                style={{ left: item.x, top: item.y }}
+                onPointerDown={(e) => startDragItem(item.id, item.x, item.y, e)}
+                onPointerMove={doDragItem}
+                onPointerUp={stopDragItem}
+                onPointerCancel={stopDragItem}
                 onClick={(e) => handleItemClick(item.id, e)}
-                dragMomentum={false}
-                onDragEnd={(e, info) => handleDragEnd(item.id, item.x, item.y, info)}
               >
                 {isLoggedIn && !isSelectMode && (
-                  <button onClick={(e) => handleDelete(item.id, e)} className="absolute -top-4 -right-4 w-6 h-6 bg-zinc-200 text-zinc-600 hover:bg-red-500 hover:text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs shadow-sm z-[70]">✕</button>
+                  <button onPointerDown={(e) => handleDelete(item.id, e)} className="absolute -top-4 -right-4 w-6 h-6 bg-zinc-200 text-zinc-600 hover:bg-red-500 hover:text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs shadow-sm z-[70]">✕</button>
                 )}
                 
                 <div
@@ -372,18 +399,13 @@ export default function Home() {
         })}
       </motion.div>
 
-      {/* 全屏大图查看 */}
       {fullscreenPhoto && (
-        <div 
-          className="fixed inset-0 z-[100000] bg-black/90 flex flex-col items-center justify-center cursor-zoom-out backdrop-blur-md"
-          onClick={() => setFullscreenPhoto(null)} 
-        >
+        <div className="fixed inset-0 z-[100000] bg-black/90 flex flex-col items-center justify-center cursor-zoom-out backdrop-blur-md" onClick={() => setFullscreenPhoto(null)}>
           <img src={fullscreenPhoto} alt="Fullscreen view" className="max-w-[95vw] max-h-[90vh] object-contain drop-shadow-2xl rounded-sm" />
           <p className="text-white/40 text-sm mt-6 font-light tracking-wide pointer-events-none">点击任意空白处返回</p>
         </div>
       )}
 
-      {/* 馆长钥匙 */}
       <div className="absolute bottom-6 right-6 z-[9999]">
         {isLoggedIn ? (
           <button onClick={handleLogout} className="px-3 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg shadow-lg font-medium text-sm">🔒 锁回墙内</button>
