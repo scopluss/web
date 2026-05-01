@@ -31,7 +31,7 @@ export default function Home() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  // 🔍 相机控制状态 (无限画布核心)
+  // 🔍 相机控制状态
   const [scale, setScale] = useState(1);
   const panX = useMotionValue(0);
   const panY = useMotionValue(0);
@@ -54,6 +54,7 @@ export default function Home() {
   const handleLogin = async () => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (!error) { alert("画廊修改权限已解锁！"); setShowLogin(false); }
+    else { alert("邮箱或密码错误！"); }
   };
   
   const handleLogout = async () => {
@@ -61,7 +62,7 @@ export default function Home() {
     alert("已锁定画廊，现在是公共浏览模式。");
   };
 
-  // 🧮 坐标轴魔法转换器：把屏幕点击的坐标，转换进被缩放/平移过的真实画布里
+  // 🧮 坐标轴魔法转换器
   const getCanvasPos = (screenX: number, screenY: number) => {
     const cx = window.innerWidth / 2;
     const cy = window.innerHeight / 2;
@@ -71,7 +72,6 @@ export default function Home() {
     };
   };
 
-  // 鼠标滚轮/触摸板：平移画布 (阻断原生滚动)
   const handleWheel = (e: React.WheelEvent) => {
     panX.set(panX.get() - e.deltaX);
     panY.set(panY.get() - e.deltaY);
@@ -79,7 +79,6 @@ export default function Home() {
 
   const handleDoubleClick = async (e: React.MouseEvent) => {
     if (!isLoggedIn) return; 
-    // 只有双击到背景点阵图才触发
     if ((e.target as HTMLElement).id === 'canvas-handle') {
       const { x: startX, y: startY } = getCanvasPos(e.clientX - 60, e.clientY - 15);
       const content = '✍️ 点击修改';
@@ -94,28 +93,66 @@ export default function Home() {
     }
   };
 
+  // 🌟 [修改] 支持批量上传的函数
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
     setIsUploading(true);
-    const fileName = `${Date.now()}.${file.name.split('.').pop()}`; 
-    const { error: uploadError } = await supabase.storage.from('photos').upload(fileName, file);
+    let successCount = 0;
+    const newCanvasItems = [];
 
-    if (uploadError) { alert("上传失败：" + uploadError.message); setIsUploading(false); return; }
+    // 循环处理用户选中的每一张图片
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      // 加上序号 i，防止一瞬间批量并发导致时间戳重名
+      const fileName = `${Date.now()}_${i}.${file.name.split('.').pop()}`; 
+      
+      const { error: uploadError } = await supabase.storage.from('photos').upload(fileName, file);
 
-    const photoUrl = supabase.storage.from('photos').getPublicUrl(fileName).data.publicUrl;
+      if (uploadError) { 
+        console.error("某张图片上传失败：", uploadError.message); 
+        continue; 
+      }
 
-    // 精准落在屏幕正中央 (无论怎么缩放平移)
-    const { x: startX, y: startY } = getCanvasPos(window.innerWidth / 2 - uploadSize / 2, window.innerHeight / 2 - uploadSize / 2);
+      const photoUrl = supabase.storage.from('photos').getPublicUrl(fileName).data.publicUrl;
 
-    const { data } = await supabase.from('canvas_items').insert({
-      item_type: 'photo', content: photoUrl, pos_x: startX, pos_y: startY, width: uploadSize, height: uploadSize
-    }).select().single();
+      // 💡 彩蛋：每次循环给坐标加上 40 像素的偏移量，实现“阶梯式散开”效果
+      const offsetX = i * 40;
+      const offsetY = i * 40;
+      const { x: startX, y: startY } = getCanvasPos(
+        window.innerWidth / 2 - uploadSize / 2 + offsetX, 
+        window.innerHeight / 2 - uploadSize / 2 + offsetY
+      );
 
-    if (data) {
-      setItems(prev => [...prev, { id: data.id, type: data.item_type, content: data.content, x: data.pos_x, y: data.pos_y, width: data.width, height: data.height }]);
+      const { data } = await supabase.from('canvas_items').insert({
+        item_type: 'photo', content: photoUrl, pos_x: startX, pos_y: startY, width: uploadSize, height: uploadSize
+      }).select().single();
+
+      if (data) {
+        newCanvasItems.push({ 
+          id: data.id, type: data.item_type, content: data.content, 
+          x: data.pos_x, y: data.pos_y, width: data.width, height: data.height 
+        });
+        successCount++;
+      }
     }
+
+    // 一次性把上传成功的所有图片加到画板上
+    if (newCanvasItems.length > 0) {
+      setItems(prev => [...prev, ...newCanvasItems]);
+    }
+
+    // 友情提示
+    if (successCount < files.length) {
+      alert(`注意：只有 ${successCount}/${files.length} 张图片上传成功。`);
+    }
+
+    // 清空 input，允许下次选择同样的图片
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+
     setIsUploading(false);
   };
 
@@ -126,7 +163,6 @@ export default function Home() {
   };
 
   const handleDragEnd = async (id: string, currentX: number, currentY: number, dragInfo: any) => {
-    // 核心修复：拖拽距离必须除以缩放比例，否则在缩放状态下拖东西会“漂移”
     const newX = currentX + dragInfo.offset.x / scale;
     const newY = currentY + dragInfo.offset.y / scale;
     setItems(prev => prev.map(item => item.id === id ? { ...item, x: newX, y: newY } : item));
@@ -149,9 +185,10 @@ export default function Home() {
       onWheel={handleWheel}
       onDoubleClick={handleDoubleClick}
     >
-      <input type="file" accept="image/*" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
+      {/* 🌟 [修改] 加上了 multiple 属性，允许浏览器批量框选图片！ */}
+      <input type="file" accept="image/*" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
 
-      {/* --- 顶部馆长控制台 (固定在屏幕上，不随画布移动) --- */}
+      {/* --- 顶部控制台 --- */}
       <div className="absolute top-6 left-6 z-50 flex flex-col items-start gap-4 pointer-events-none">
         <div>
           <h1 className="text-3xl font-bold text-zinc-800 tracking-tighter">My Canvas.</h1>
@@ -172,7 +209,7 @@ export default function Home() {
               </select>
             </div>
             <button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className={`px-4 py-2 text-sm rounded-full shadow-lg transition-all text-white ${isUploading ? 'bg-zinc-400' : 'bg-zinc-900 hover:scale-105'}`}>
-              {isUploading ? "📸 飞升中..." : "+ 上传图画"}
+              {isUploading ? "📸 疯狂飞升中..." : "+ 批量上传图画"}
             </button>
           </div>
         )}
@@ -194,7 +231,6 @@ export default function Home() {
         drag
         dragMomentum={true}
       >
-        {/* 1. 巨大且透明的“平移把手”，铺满全宇宙并自带网点 */}
         <div 
           id="canvas-handle"
           className="absolute w-[1000vw] h-[1000vh] -left-[450vw] -top-[450vh] cursor-grab active:cursor-grabbing"
@@ -205,7 +241,6 @@ export default function Home() {
           }}
         />
 
-        {/* 2. 画布里的实体元素 */}
         {items.map((item) => {
           if (item.type === 'photo') {
             return (
