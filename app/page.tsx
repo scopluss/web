@@ -100,7 +100,7 @@ export default function Home() {
 
     setIsUploading(true);
     let successCount = 0;
-    const newCanvasItems = [];
+    const newCanvasItems: CanvasItem[] = [];
 
     // 循环处理用户选中的每一张图片
     for (let i = 0; i < files.length; i++) {
